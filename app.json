@@ -2,6 +2,7 @@
   "expo": {
     "name": "Puphii",
     "slug": "puphii-mvp",
+    "owner": "39seikagrp",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -55,6 +56,11 @@
         }
       ],
       "./plugins/withoutPushEntitlement"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "af01f283-4650-4066-93eb-7937b603c76b"
+      }
+    }
   }
 }
