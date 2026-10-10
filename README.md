@@ -24,16 +24,39 @@ Requires Node.js 22.13 or newer.
 
 ```bash
 npm install
-npx expo start          # then press i (iOS), a (Android) or w (web)
+npm run start:go        # Expo Go: then press i (iOS), a (Android) or w (web)
+npx expo start          # a development build (see below)
 ```
 
+Because `expo-dev-client` is installed, plain `npx expo start` targets a development build. Use `npm run start:go` (or press `s` in the Expo CLI) to keep using Expo Go. In Expo Go and on the web there is no store connection, so subscription status reports "store unavailable"; the app is otherwise unaffected.
+
 When running in Expo Go, Expo's floating developer-tools button can cover the app's settings shortcut in the top-right corner of Home. It is not part of the app and does not appear in development or production builds.
+
+## Development builds and subscriptions
+
+Subscriptions use RevenueCat (`react-native-purchases`), which needs native code, so it only works in a development or store build. Subscription gating is off (`SUBSCRIPTION_GATING_ENABLED = false`): every screen stays fully accessible whatever the status.
+
+The SDK only starts when all of these are set; until then the status is "not configured" and no RevenueCat request is made:
+
+- `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY` — the **public** SDK keys (`appl_…`, `goog_…`). Copy `.env.example` to `.env.local` (git-ignored) and restart `npx expo start`: a development build loads its JavaScript, keys included, from your local server. Builds that embed their JavaScript (later preview and store builds) need the same variables in the matching EAS environment, because `.env.local` is not uploaded. Secret keys (`sk_…`) are refused and must never be added. RevenueCat Test Store keys (`test_…`) are accepted in development builds only.
+- `REVENUECAT_ENTITLEMENT_ID` and each plan's `productIds` in `src/subscription/config.ts` — currently `null` placeholders, to be filled in once the RevenueCat entitlement and the App Store / Google Play products exist. On Android, product IDs take the form `subscriptionId:basePlanId`.
+
+Build and install (requires an Expo account; `eas build` links the project on first run, adding the EAS project ID to `app.json`):
+
+```bash
+npx eas-cli build --profile development --platform ios              # device build; register devices with `npx eas-cli device:create`
+npx eas-cli build --profile development-simulator --platform ios    # iOS Simulator build
+npx eas-cli build --profile development --platform android          # installable APK
+npx expo start --dev-client                                         # then open the project from the installed build
+```
+
+`eas.json` only adds development profiles; the bundle identifier and Android package stay `com.puphii.app`. Native `ios/` and `android/` folders are not committed: they are generated during the build.
 
 ## Checks
 
 ```bash
 npm run typecheck       # tsc --noEmit
-npm test                # unit tests for day keys, DST, series, undo, sanitising, the write queue, insights, savings and Bubble Break
+npm test                # unit tests for day keys, DST, series, undo, sanitising, the write queue, insights, savings, Bubble Break, storage migrations and subscription status
 ```
 
 ## Project structure
@@ -41,7 +64,7 @@ npm test                # unit tests for day keys, DST, series, undo, sanitising
 - `App.tsx` — font loading, store provider, tab shell.
 - `src/theme/` — colour, spacing, radius, shadow and typography tokens.
 - `src/data/` — puff log types, pure date/count logic, AsyncStorage persistence, serialized write queue and the `PuphiiStore` context. `persistence.ts` and `migrations.ts` version the stored data: add a migration instead of renaming a key, and keep fields you don't recognise.
-- `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). The mock is for tests only.
+- `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). `revenueCat.ts` turns RevenueCat customer info into an entitlement and keeps it current (foreground refresh, update listener, offline handling); `revenueCatSdk.ts` is the only file that touches the native SDK; `EntitlementProvider` makes the status available to the app. The mock is for tests only.
 - `src/mascot/` — face registry, reaction-mode mapping and the animated `Mascot` component.
 - `src/components/` — shared UI (buttons, cards, tab bar, dialogs, chart, settings rows, number/text fields, option sheet, icons, backgrounds).
 - `src/data/insights.ts` — pure period, comparison and time-of-day calculations behind Insights.

@@ -35,12 +35,14 @@ The daily count uses the device's local calendar date (`localDayKey`), which is 
 
 ## 3. Network and third-party inventory
 
-No app code makes network requests. There is no backend, account, cloud sync, analytics, advertising, attribution, crash reporting or remote logging, and none of those SDKs are installed.
+No app code makes network requests. There is no backend, account, cloud sync, analytics, advertising, attribution, crash reporting or remote logging, and none of those SDKs are installed. The RevenueCat subscription SDK (below) is installed but does not start until public SDK keys and the entitlement identifier are configured; in the current build they are not.
 
 | Dependency | Network behaviour found | Conclusion |
 |---|---|---|
 | `expo-notifications` | Contains code that posts a device push token to `exp.host`, but only after `getExpoPushTokenAsync` or `setAutoServerRegistrationEnabledAsync` is called. Puphii calls neither, and only loads the module when the user turns reminders on. | No transmission. |
 | `expo-notifications` (Android) | Links `firebase-messaging`. Firebase does not initialise without a `google-services.json`, which Puphii does not have. | No transmission on Android as configured. Re-check if Firebase is ever added. |
+| `react-native-purchases` (RevenueCat) | Once configured, talks to RevenueCat's servers and the App Store / Google Play to read subscription status. It sends an anonymous RevenueCat user ID (random, not linked to an account), store transactions and receipts, and app, SDK, OS and storefront details, plus the usual request metadata such as IP address. Puphii passes no puff logs, settings, savings or game data. Its iOS privacy manifest declares Purchase History (not linked, not tracking). Not configured in the current build, so nothing is sent. | **Re-evaluate before enabling.** The App Privacy label will need Purchases → Purchase History, and the privacy policy must name RevenueCat. **Verify** the Android Play Billing permission in the first Android build. |
+| `expo-dev-client` | Development builds only: discovers and connects to the developer's Metro server on the local network (adds local-network and Bonjour keys, which its build phase strips from Release builds). Not included in store builds. | Development only. |
 | `react-native-svg` | `SvgUri`/remote CSS can fetch URLs. Puphii only uses inline SVG. | No transmission. |
 | `expo-audio`, `expo-haptics`, `expo-font`, AsyncStorage, safe-area-context | Local only. Fonts and the sound are bundled, not downloaded. | No transmission. |
 | `expo-application`, `expo-constants` (transitive) | Can read identifiers such as IDFV, but Puphii never calls those APIs. | No transmission. |
@@ -75,6 +77,7 @@ No location, contacts, camera, microphone, photos, health, tracking (ATT) or oth
 ## 6. Logging
 
 - The only app log is `console.error` when bundled fonts fail to load; it contains the font error, not user data.
+- Development builds also log the subscription status (for example "notConfigured"), and RevenueCat logs at debug level. Release builds keep RevenueCat at warning level and do not log the status.
 - AsyncStorage's native logs report storage errors without stored values.
 - No puff records, timestamps or counts are logged anywhere.
 
@@ -98,7 +101,7 @@ No location, contacts, camera, microphone, photos, health, tracking (ATT) or oth
 | F14 | About tagline "Don't just count it. Count it scared." is a fear appeal. Not a health claim, but marketing tone matters for review and for consumer-protection rules on advertising. | Low | **Owner decision.** |
 | F15 | Expressive mode includes a coughing face, which depicts a physical symptom. Disclaimers state faces are not health measurements. | Low | **Owner decision.** |
 | F16 | Learn content and sources are English and US/UK-based. | Medium for Japan | **Open.** Japanese localisation and Japanese public-health sources (for example MHLW) before a Japan launch. |
-| F17 | `npm audit` reports 22 advisories (15 high, 7 moderate, 0 critical). The high ones trace to two root packages: `braces`/`micromatch` (denial of service from crafted glob patterns, used by Metro and the Expo CLI at build time) and `node-forge` (used by Expo's code-signing tooling). Neither is part of the app's runtime bundle, and the app processes no untrusted input with them. | Low for users; relevant for the build machine | **Open.** Upgrade when Expo ships patched versions; do not run `npm audit fix --force`, which would break the SDK version set. |
+| F17 | `npm audit` reports 22 advisories (15 high, 7 moderate, 0 critical); 23 after adding `react-native-purchases`, which npm flags only because it depends on `react-native` (its suggested "fix" is a downgrade). The high ones trace to two root packages: `braces`/`micromatch` (denial of service from crafted glob patterns, used by Metro and the Expo CLI at build time) and `node-forge` (used by Expo's code-signing tooling). Neither is part of the app's runtime bundle, and the app processes no untrusted input with them. | Low for users; relevant for the build machine | **Open.** Upgrade when Expo ships patched versions; do not run `npm audit fix --force`, which would break the SDK version set. |
 
 ## 8. App Store readiness notes
 
@@ -107,7 +110,7 @@ No location, contacts, camera, microphone, photos, health, tracking (ATT) or oth
 - **Age rating:** answer the questionnaire's tobacco/drug references question accurately; expect a higher rating than 4+. Consider whether the product targets adults only (the legal smoking age in Japan is 20).
 - **Health and medical (guideline 1.4.1 / 5.1.3):** Puphii does not diagnose, measure or advise. Keep store screenshots and descriptions consistent with that; avoid "detox", "lung health" or "recovery" claims.
 - **Review notes:** state that the app has no account, no network features, and that reminders are optional local notifications.
-- **Monetisation:** undecided. Any paid download, unlock or subscription must be assessed separately (App Store rules, Japan's Act on Specified Commercial Transactions display requirements, consumer law in each market). No payment code was added or removed.
+- **Monetisation:** an annual subscription with a free trial and a monthly subscription are planned through RevenueCat. The SDK is integrated but unconfigured, subscription gating is off, and there is no paywall or purchase button yet. The paywall must be assessed separately before release (App Store rules, Japan's Act on Specified Commercial Transactions display requirements, consumer law in each market).
 
 ## 9. Japan and future markets
 
@@ -125,3 +128,5 @@ Engineering facts the owner's adviser will need:
 - Web, end to end: corrupted saved logs and settings were set aside on load; "Clear puff history" removed the log copy and kept settings; "Reset everything" removed both copies and dismissed the warning.
 
 Not verified: a compiled iOS or Android release build, TestFlight processing, real-device reminders, and the merged privacy manifest after `pod install`.
+
+RevenueCat integration (subscription phase 2A): an iOS Simulator **Debug** development build was prebuilt and compiled in a scratch copy (`pod install`, `xcodebuild`: succeeded). It kept `com.puphii.app`, bundled RevenueCat's privacy manifest (Purchase History, not linked, no tracking), ran on the simulator, and reported "not configured" without starting the SDK. Not verified: Android builds (no Android toolchain on the build machine), EAS cloud builds, release builds, real devices and sandbox purchases.

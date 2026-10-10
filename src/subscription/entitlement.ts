@@ -12,26 +12,29 @@ export type TrialEligibility = 'eligible' | 'ineligible' | 'unknown';
 
 export type VerificationErrorKind = 'network' | 'storeUnavailable' | 'verificationFailed' | 'notConfigured' | 'unknown';
 
+/** Null when the store reports a product that isn't one of the configured plans. Access doesn't depend on it. */
+export type ReportedPlan = PlanId | null;
+
 export type Entitlement =
   /** Not checked yet, or a check is in progress. */
   | { status: 'unknown' }
   /** `period` separates the free trial (an introductory offer) from paid time. */
   | {
       status: 'active';
-      plan: PlanId;
+      plan: ReportedPlan;
       period: 'trial' | 'paid';
       expiresAt: string | null;
       willRenew: boolean;
       verification: Verification;
     }
   /** A renewal failed, but the store still grants access until `expiresAt` while billing is fixed. */
-  | { status: 'gracePeriod'; plan: PlanId; expiresAt: string | null; verification: Verification }
+  | { status: 'gracePeriod'; plan: ReportedPlan; expiresAt: string | null; verification: Verification }
   /** A renewal failed and the store is retrying without granting access. */
-  | { status: 'billingRetry'; plan: PlanId; verification: Verification }
+  | { status: 'billingRetry'; plan: ReportedPlan; verification: Verification }
   | {
       status: 'inactive';
       reason: 'neverSubscribed' | 'expired' | 'refunded' | 'revoked';
-      lastPlan: PlanId | null;
+      lastPlan: ReportedPlan;
       /** Whether the store would give this person the annual plan's free trial. */
       annualTrial: TrialEligibility;
       verification: Verification;

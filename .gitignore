@@ -5,3 +5,5 @@ web-build/
 *.log
 .DS_Store
 .test-build/
+.env
+.env*.local

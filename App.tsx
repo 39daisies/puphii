@@ -9,6 +9,7 @@ import { BubbleBreakScreen } from './src/screens/BubbleBreakScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { INITIAL_INSIGHTS_STATE, InsightsScreen, InsightsState } from './src/screens/InsightsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
+import { EntitlementProvider } from './src/subscription/EntitlementProvider';
 import { colors, fontAssets } from './src/theme';
 
 export default function App() {
@@ -27,7 +28,9 @@ export default function App() {
         <LoadingScreen />
       ) : (
         <PuphiiProvider>
-          <AppShell />
+          <EntitlementProvider>
+            <AppShell />
+          </EntitlementProvider>
         </PuphiiProvider>
       )}
     </SafeAreaProvider>
