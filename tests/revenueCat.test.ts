@@ -3,7 +3,14 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { CustomerInfo, PurchasesEntitlementInfo } from 'react-native-purchases';
-import { PLANS, REVENUECAT_ENTITLEMENT_ID, SUBSCRIPTION_GATING_ENABLED } from '../src/subscription/config';
+import {
+  PLANS,
+  productIdsFor,
+  REVENUECAT_ENTITLEMENT_ID,
+  REVENUECAT_OFFERING_ID,
+  SUBSCRIPTION_GATING_ENABLED,
+  TEST_STORE_PRODUCT_IDS,
+} from '../src/subscription/config';
 import { accessFor, Entitlement } from '../src/subscription/entitlement';
 import { createMockEntitlementService, mockEntitlements } from '../src/subscription/mockEntitlements';
 import {
@@ -23,7 +30,7 @@ import { checkSdkKey, checkTestStoreKey, SdkKeyCheck, selectSdkKey } from '../sr
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const rc = require('@revenuecat/purchases-typescript-internal');
 
-/** Test-only identifiers. The app's real ones are still unset placeholders. */
+/** Test-only identifiers, deliberately different from the app's real ones. */
 const ENTITLEMENT = 'test-entitlement';
 const PRODUCTS = { annual: 'test.annual', monthly: 'test.monthly' };
 const IOS_KEY: SdkKeyCheck = { ok: true, apiKey: 'appl_TestOnlyKey123', source: 'platform' };
@@ -213,9 +220,36 @@ describe('RevenueCat SDK keys', () => {
 });
 
 describe('RevenueCat setup', () => {
-  test('identifiers stay unset placeholders until the RevenueCat project and store products exist', () => {
-    assert.equal(REVENUECAT_ENTITLEMENT_ID, null);
+  test('the entitlement, offering and packages match the RevenueCat project', () => {
+    assert.equal(REVENUECAT_ENTITLEMENT_ID, 'puphii_pro');
+    assert.equal(REVENUECAT_OFFERING_ID, 'default');
+    assert.equal(PLANS.annual.packageId, '$rc_annual');
+    assert.equal(PLANS.monthly.packageId, '$rc_monthly');
+  });
+
+  test('Test Store products are kept apart from the App Store and Google Play products', () => {
+    assert.deepEqual(TEST_STORE_PRODUCT_IDS, { annual: 'yearly', monthly: 'monthly' });
     for (const plan of Object.values(PLANS)) assert.deepEqual(plan.productIds, { ios: null, android: null });
+    assert.deepEqual(productIdsFor('testStore', 'ios'), { annual: 'yearly', monthly: 'monthly' });
+    assert.deepEqual(productIdsFor('testStore', 'android'), { annual: 'yearly', monthly: 'monthly' });
+    assert.deepEqual(productIdsFor('platform', 'ios'), { annual: null, monthly: null });
+    assert.deepEqual(productIdsFor('platform', 'android'), { annual: null, monthly: null });
+  });
+
+  test('outside development builds the Test Store key, and so its product IDs, are never selected', () => {
+    const key = selectSdkKey({ platform: 'ios', platformKey: undefined, testStoreKey: 'test_abc123', isDevelopmentBuild: false });
+    assert.deepEqual(key, { ok: false, reason: 'missing' });
+    const release = selectSdkKey({ platform: 'android', platformKey: 'goog_abc123', testStoreKey: 'test_abc123', isDevelopmentBuild: false });
+    assert.ok(release.ok && release.source === 'platform');
+    assert.deepEqual(productIdsFor(release.source, 'android'), { annual: null, monthly: null });
+  });
+
+  test('a Test Store purchase of either product is reported as its plan', () => {
+    const products = productIdsFor('testStore', 'ios');
+    const annual = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'yearly', periodType: 'TRIAL' })]), ENTITLEMENT, products);
+    const monthly = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'monthly' })]), ENTITLEMENT, products);
+    assert.ok(annual.status === 'active' && annual.plan === 'annual' && annual.period === 'trial');
+    assert.ok(monthly.status === 'active' && monthly.plan === 'monthly' && monthly.period === 'paid');
   });
 
   test('the SDK is never configured without a store module, a valid key and an entitlement ID', () => {

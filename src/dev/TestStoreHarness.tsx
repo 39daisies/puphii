@@ -3,12 +3,12 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View
 import { registerDevMenuItems } from 'expo-dev-client';
 import Purchases from 'react-native-purchases';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { REVENUECAT_ENTITLEMENT_ID, SUBSCRIPTION_GATING_ENABLED } from '../subscription/config';
+import { PLANS, REVENUECAT_ENTITLEMENT_ID, REVENUECAT_OFFERING_ID, SUBSCRIPTION_GATING_ENABLED } from '../subscription/config';
 import { useEntitlement } from '../subscription/EntitlementProvider';
 import { KEY_MESSAGES } from '../subscription/revenueCat';
-import { appSdkKey, hasNativeStore } from '../subscription/revenueCatSdk';
+import { appProductIds, appSdkKey, hasNativeStore } from '../subscription/revenueCatSdk';
 import { colors, spacing } from '../theme';
-import { createTestStoreHarness, describeEntitlement, HarnessState, TestStoreSdk } from './testStoreHarness';
+import { createTestStoreHarness, describeEntitlement, ExpectedOffering, HarnessState, TestStoreSdk } from './testStoreHarness';
 
 /**
  * Development builds only: App.tsx loads this file behind `__DEV__`, so production bundles
@@ -38,6 +38,14 @@ export function TestStoreHarnessHost() {
 
 const usingTestStore = appSdkKey.ok && appSdkKey.source === 'testStore';
 
+const expectedOffering: ExpectedOffering = {
+  offeringId: REVENUECAT_OFFERING_ID,
+  plans: {
+    annual: { ...PLANS.annual, productId: appProductIds.annual },
+    monthly: { ...PLANS.monthly, productId: appProductIds.monthly },
+  },
+};
+
 function keyDescription(): string {
   if (!appSdkKey.ok) return `Key problem: ${KEY_MESSAGES[appSdkKey.reason]}`;
   return appSdkKey.source === 'testStore'
@@ -54,6 +62,7 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
         entitlementId: REVENUECAT_ENTITLEMENT_ID,
         entitlements: { refresh, restorePurchases },
         usingTestStore,
+        expected: expectedOffering,
       }),
     [refresh, restorePurchases],
   );
@@ -113,6 +122,17 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
               <Text style={styles.muted}>Refresh or purchase to read customer info.</Text>
             )}
           </Section>
+
+          {state.offeringCheck ? (
+            <Section title="Setup check">
+              {state.offeringCheck.lines.map((line) => (
+                <Text key={line} style={styles.body}>
+                  {line}
+                </Text>
+              ))}
+              <Text style={styles.muted}>Prices and trial lengths aren't checked: compare them with the RevenueCat dashboard.</Text>
+            </Section>
+          ) : null}
 
           <Section title="Products">
             {state.productsMessage ? <Text style={styles.body}>{state.productsMessage}</Text> : null}

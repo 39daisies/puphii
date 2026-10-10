@@ -84,7 +84,7 @@ describe('subscription configuration', () => {
     assert.equal(PLANS.annual.billingPeriod, 'P1Y');
     assert.equal(PLANS.monthly.billingPeriod, 'P1M');
     for (const plan of Object.values(PLANS)) {
-      assert.deepEqual(Object.keys(plan).sort(), ['billingPeriod', 'hasFreeTrial', 'productIds']);
+      assert.deepEqual(Object.keys(plan).sort(), ['billingPeriod', 'hasFreeTrial', 'packageId', 'productIds']);
     }
   });
 

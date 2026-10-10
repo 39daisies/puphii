@@ -1,5 +1,5 @@
 import type { CustomerInfo, MakePurchaseResult, PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
-import { Entitlement, RestoreResult } from '../subscription/entitlement';
+import { Entitlement, PlanId, RestoreResult } from '../subscription/entitlement';
 import { classifyError } from '../subscription/revenueCat';
 
 /**
@@ -68,6 +68,53 @@ export function productRows(offerings: PurchasesOfferings): ProductRow[] {
       pkg,
     })),
   );
+}
+
+export type ExpectedPlan = { packageId: string; productId: string | null; billingPeriod: string; hasFreeTrial: boolean };
+export type ExpectedOffering = { offeringId: string; plans: Record<PlanId, ExpectedPlan> };
+export type OfferingCheck = { ok: boolean; lines: string[] };
+
+function checkPlan(plan: PlanId, want: ExpectedPlan, pkg: PurchasesPackage | undefined): { ok: boolean; line: string } {
+  if (!pkg) return { ok: false, line: `Mismatch ${plan}: package ${want.packageId} is not in the current offering.` };
+  const { product } = pkg;
+  const problems: string[] = [];
+  if (want.productId === null) problems.push('no product ID is configured for this store');
+  else if (product.identifier !== want.productId) problems.push(`product is ${product.identifier}, expected ${want.productId}`);
+  if (product.subscriptionPeriod !== want.billingPeriod) {
+    problems.push(`period is ${product.subscriptionPeriod ?? 'none'}, expected ${want.billingPeriod}`);
+  }
+  const intro = describeIntro(pkg);
+  const hasFreeTrial = product.introPrice?.price === 0;
+  if (want.hasFreeTrial && !hasFreeTrial) problems.push(intro ? `expected a free trial, found "${intro}"` : 'expected a free trial, found none');
+  if (!want.hasFreeTrial && intro) problems.push(`expected no introductory offer, found "${intro}"`);
+  const summary = `${pkg.identifier} → ${product.identifier}, ${product.subscriptionPeriod ?? 'no period'}, ${product.priceString}, ${intro ?? 'no trial'}`;
+  return problems.length
+    ? { ok: false, line: `Mismatch ${plan}: ${problems.join('; ')} (${summary})` }
+    : { ok: true, line: `OK ${plan}: ${summary}` };
+}
+
+/**
+ * Compares the current offering with the app's configuration: offering, packages, product IDs,
+ * billing periods and whether there is a free trial. Prices and trial lengths are shown but not
+ * judged, since they live in the store, not in the app.
+ */
+export function checkOffering(offerings: PurchasesOfferings, expected: ExpectedOffering): OfferingCheck {
+  const current = offerings.current;
+  if (!current) return { ok: false, lines: [`Mismatch: RevenueCat has no current offering; expected "${expected.offeringId}".`] };
+  const offeringOk = current.identifier === expected.offeringId;
+  const lines = [
+    offeringOk
+      ? `OK current offering: ${current.identifier}`
+      : `Mismatch: current offering is "${current.identifier}", expected "${expected.offeringId}".`,
+  ];
+  let ok = offeringOk;
+  for (const plan of ['annual', 'monthly'] as const) {
+    const want = expected.plans[plan];
+    const result = checkPlan(plan, want, current.availablePackages.find((pkg) => pkg.identifier === want.packageId));
+    ok &&= result.ok;
+    lines.push(result.line);
+  }
+  return { ok, lines };
 }
 
 export type PurchaseOutcome =
@@ -175,6 +222,8 @@ export type HarnessState = {
   products: ProductRow[];
   /** Null until products have been requested. */
   productsMessage: string | null;
+  /** Null until products have loaded. */
+  offeringCheck: OfferingCheck | null;
   customer: CustomerSummary | null;
   /** Newest first. */
   log: { id: number; message: string }[];
@@ -197,14 +246,16 @@ export function createTestStoreHarness({
   entitlementId,
   entitlements,
   usingTestStore,
+  expected,
 }: {
   sdk: TestStoreSdk;
   entitlementId: string | null;
   entitlements: EntitlementActions;
   /** Purchases are only offered with the Test Store key, never through the App Store or Google Play. */
   usingTestStore: boolean;
+  expected: ExpectedOffering;
 }): TestStoreHarness {
-  let state: HarnessState = { busy: null, products: [], productsMessage: null, customer: null, log: [] };
+  let state: HarnessState = { busy: null, products: [], productsMessage: null, offeringCheck: null, customer: null, log: [] };
   let nextLogId = 1;
   const listeners = new Set<(state: HarnessState) => void>();
 
@@ -221,7 +272,7 @@ export function createTestStoreHarness({
     try {
       if (!(await sdk.isConfigured())) {
         log(NOT_CONFIGURED);
-        if (action === 'loadingProducts') update({ products: [], productsMessage: NOT_CONFIGURED });
+        if (action === 'loadingProducts') update({ products: [], productsMessage: NOT_CONFIGURED, offeringCheck: null });
         return null;
       }
       return await body();
@@ -251,15 +302,19 @@ export function createTestStoreHarness({
     loadProducts: async () => {
       await run('loadingProducts', async () => {
         try {
-          const products = productRows(await sdk.getOfferings());
+          const offerings = await sdk.getOfferings();
+          const products = productRows(offerings);
+          const offeringCheck = checkOffering(offerings, expected);
           update({
             products,
             productsMessage: products.length ? null : 'RevenueCat returned no offerings with packages. Check the offering setup.',
+            offeringCheck,
           });
           log(`Loaded ${products.length} product${products.length === 1 ? '' : 's'}.`);
+          log(offeringCheck.ok ? 'Offering matches the app configuration.' : "Offering doesn't match the app configuration. See Setup check.");
         } catch (error) {
           const message = `Couldn't load products: ${errorDetail(error)}`;
-          update({ products: [], productsMessage: message });
+          update({ products: [], productsMessage: message, offeringCheck: null });
           log(message);
         }
       });

@@ -4,17 +4,19 @@ import { join, relative } from 'node:path';
 import { describe, test } from 'node:test';
 import type { CustomerInfo, MakePurchaseResult, PurchasesEntitlementInfo, PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
 import {
+  checkOffering,
   createTestStoreHarness,
   describeEntitlement,
   describeOutcome,
   EntitlementActions,
+  ExpectedOffering,
   productRows,
   PURCHASE_ERROR_CODES,
   purchaseErrorOutcome,
   summarizeCustomer,
   TestStoreSdk,
 } from '../src/dev/testStoreHarness';
-import { SUBSCRIPTION_GATING_ENABLED } from '../src/subscription/config';
+import { PLANS, productIdsFor, REVENUECAT_OFFERING_ID, SUBSCRIPTION_GATING_ENABLED } from '../src/subscription/config';
 import { accessFor, Entitlement, RestoreResult } from '../src/subscription/entitlement';
 import { entitlementFromCustomerInfo } from '../src/subscription/revenueCat';
 
@@ -62,6 +64,23 @@ function customer(entries: PurchasesEntitlementInfo[] = []): CustomerInfo {
   return { entitlements: { all, active, verification: 'NOT_REQUESTED' }, requestDate: REQUEST_DATE } as unknown as CustomerInfo;
 }
 
+/** What the harness expects with the Test Store key, built from the app's real configuration. */
+const TEST_STORE_IDS = productIdsFor('testStore', 'ios');
+const EXPECTED: ExpectedOffering = {
+  offeringId: REVENUECAT_OFFERING_ID,
+  plans: {
+    annual: { ...PLANS.annual, productId: TEST_STORE_IDS.annual },
+    monthly: { ...PLANS.monthly, productId: TEST_STORE_IDS.monthly },
+  },
+};
+const WEEK_TRIAL = { price: 0, priceString: '$0.00', periodUnit: 'WEEK', periodNumberOfUnits: 1 };
+const DAY_TRIAL = { price: 0, priceString: '$0.00', periodUnit: 'DAY', periodNumberOfUnits: 7 };
+/** The offering as planned in the RevenueCat dashboard. */
+const planned = (annualIntro: object | null = DAY_TRIAL) =>
+  offerings('default', {
+    default: [pkg('$rc_annual', 'yearly', '$29.99', 'P1Y', annualIntro), pkg('$rc_monthly', 'monthly', '$4.99', 'P1M')],
+  });
+
 const storeError = (code: string, extra: object = {}) => Object.assign(new Error(`store error ${code}`), { code, ...extra });
 
 function deferred<T>() {
@@ -108,7 +127,7 @@ function fakes({ configured = true, usingTestStore = true } = {}) {
       return control.restore();
     },
   };
-  const harness = createTestStoreHarness({ sdk, entitlementId: ENTITLEMENT, entitlements, usingTestStore });
+  const harness = createTestStoreHarness({ sdk, entitlementId: ENTITLEMENT, entitlements, usingTestStore, expected: EXPECTED });
   return { harness, calls, control };
 }
 
@@ -229,6 +248,77 @@ describe('Test Store products and outcomes', () => {
     assert.ok(active.status === 'active' && active.period === 'trial' && active.plan === null);
     assert.deepEqual(describeEntitlement(active).slice(0, 2), ['Status: active (free trial)', 'Plan: not one of the configured store products']);
     assert.deepEqual(describeEntitlement({ status: 'error', error: { kind: 'notConfigured', message: 'x' } }), ['Status: error (notConfigured)', 'x']);
+  });
+});
+
+describe('Test Store offering check', () => {
+  test('the planned offering passes, with prices and trial length shown but not judged', () => {
+    for (const trial of [DAY_TRIAL, WEEK_TRIAL]) {
+      const check = checkOffering(planned(trial), EXPECTED);
+      assert.equal(check.ok, true, check.lines.join('\n'));
+      assert.equal(check.lines[0], 'OK current offering: default');
+    }
+    const { lines } = checkOffering(planned(), EXPECTED);
+    assert.equal(lines[1], 'OK annual: $rc_annual → yearly, P1Y, $29.99, Free trial: 7 days');
+    assert.equal(lines[2], 'OK monthly: $rc_monthly → monthly, P1M, $4.99, no trial');
+  });
+
+  test('a different or missing current offering is reported', () => {
+    const other = offerings('promo', { promo: planned().current!.availablePackages });
+    assert.match(checkOffering(other, EXPECTED).lines[0], /current offering is "promo", expected "default"/);
+    assert.equal(checkOffering(other, EXPECTED).ok, false);
+    const none = checkOffering(offerings(null, { default: planned().current!.availablePackages }), EXPECTED);
+    assert.deepEqual(none, { ok: false, lines: ['Mismatch: RevenueCat has no current offering; expected "default".'] });
+  });
+
+  test('swapped products, wrong periods and missing packages are reported', () => {
+    const swapped = checkOffering(
+      offerings('default', {
+        default: [pkg('$rc_annual', 'monthly', '$4.99', 'P1M'), pkg('$rc_monthly', 'yearly', '$29.99', 'P1Y', DAY_TRIAL)],
+      }),
+      EXPECTED,
+    );
+    assert.equal(swapped.ok, false);
+    assert.match(swapped.lines[1], /^Mismatch annual: product is monthly, expected yearly; period is P1M, expected P1Y; expected a free trial, found none/);
+    assert.match(swapped.lines[2], /^Mismatch monthly: product is yearly, expected monthly; period is P1Y, expected P1M; expected no introductory offer/);
+
+    const missing = checkOffering(offerings('default', { default: [pkg('$rc_annual', 'yearly', '$29.99', 'P1Y', DAY_TRIAL)] }), EXPECTED);
+    assert.equal(missing.ok, false);
+    assert.equal(missing.lines[2], 'Mismatch monthly: package $rc_monthly is not in the current offering.');
+  });
+
+  test('the annual trial must be free; a paid intro offer or none is reported', () => {
+    assert.match(checkOffering(planned(null), EXPECTED).lines[1], /expected a free trial, found none/);
+    const paid = { price: 0.99, priceString: '$0.99', periodUnit: 'MONTH', periodNumberOfUnits: 1 };
+    assert.match(checkOffering(planned(paid), EXPECTED).lines[1], /expected a free trial, found "Introductory price \$0\.99 for 1 month"/);
+  });
+
+  test('store products that are not configured yet are reported, not assumed', () => {
+    const platform = productIdsFor('platform', 'ios');
+    const expected: ExpectedOffering = {
+      offeringId: REVENUECAT_OFFERING_ID,
+      plans: { annual: { ...PLANS.annual, productId: platform.annual }, monthly: { ...PLANS.monthly, productId: platform.monthly } },
+    };
+    const check = checkOffering(planned(), expected);
+    assert.equal(check.ok, false);
+    assert.match(check.lines[1], /no product ID is configured for this store/);
+  });
+
+  test('loading products runs the check and logs its result', async () => {
+    const good = fakes();
+    good.control.offerings = () => Promise.resolve(planned());
+    await good.harness.loadProducts();
+    assert.equal(good.harness.current().offeringCheck?.ok, true);
+    assert.match(good.harness.current().log[0].message, /matches the app configuration/);
+
+    const bad = fakes();
+    await bad.harness.loadProducts();
+    assert.equal(bad.harness.current().offeringCheck?.ok, false);
+    assert.match(bad.harness.current().log[0].message, /doesn't match/);
+
+    bad.control.offerings = () => Promise.reject(storeError('10'));
+    await bad.harness.loadProducts();
+    assert.equal(bad.harness.current().offeringCheck, null);
   });
 });
 

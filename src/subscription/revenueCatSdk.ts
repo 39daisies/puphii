@@ -1,6 +1,6 @@
 import { AppState, NativeModules, Platform } from 'react-native';
 import Purchases, { LOG_LEVEL } from 'react-native-purchases';
-import { PLANS, REVENUECAT_ENTITLEMENT_ID } from './config';
+import { productIdsFor, REVENUECAT_ENTITLEMENT_ID } from './config';
 import { createRevenueCatService, PurchasesSdk, RevenueCatService } from './revenueCat';
 import { selectSdkKey } from './sdkKeys';
 
@@ -41,13 +41,18 @@ export const appSdkKey = selectSdkKey({
   isDevelopmentBuild: __DEV__,
 });
 
+/** The product IDs that match the store `appSdkKey` connects to. */
+export const appProductIds = productIdsFor(
+  appSdkKey.ok ? appSdkKey.source : 'platform',
+  Platform.OS === 'android' ? 'android' : 'ios',
+);
+
 export function createAppEntitlementService(): RevenueCatService {
-  const platform = Platform.OS === 'android' ? 'android' : 'ios';
   return createRevenueCatService({
     sdk: hasNativeStore ? purchasesSdk : null,
     key: appSdkKey,
     entitlementId: REVENUECAT_ENTITLEMENT_ID,
-    productIds: { annual: PLANS.annual.productIds[platform], monthly: PLANS.monthly.productIds[platform] },
+    productIds: appProductIds,
     appState: {
       current: () => AppState.currentState,
       subscribe(listener) {

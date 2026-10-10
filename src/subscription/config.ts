@@ -1,13 +1,20 @@
 import { PlanId } from './entitlement';
+import { KeySource, StorePlatform } from './sdkKeys';
 
 /** While false, every feature stays available exactly as it is today. */
 export const SUBSCRIPTION_GATING_ENABLED = false;
 
 /**
- * Identifier of the RevenueCat entitlement that unlocks Puphii's premium experience.
- * Null until it is created in the RevenueCat dashboard; until then the SDK isn't started.
+ * Identifier of the RevenueCat entitlement that unlocks Puphii's premium experience. Shared by
+ * every store, the Test Store included. Null would keep the SDK from starting.
  */
-export const REVENUECAT_ENTITLEMENT_ID: string | null = null;
+export const REVENUECAT_ENTITLEMENT_ID: string | null = 'puphii_pro';
+
+/**
+ * The offering RevenueCat should report as current. The app reads `offerings.current`; this is
+ * only compared against it by the development Test Store screen.
+ */
+export const REVENUECAT_OFFERING_ID = 'default';
 
 /**
  * Prices, currencies and the trial's length are set in App Store Connect and Google Play
@@ -19,12 +26,26 @@ export type PlanConfig = {
    * Android: `subscriptionId:basePlanId`, as RevenueCat lists Google Play products.
    */
   productIds: { ios: string | null; android: string | null };
+  /** The package holding this plan in the current offering, the same for every store. */
+  packageId: string;
   /** ISO 8601 billing period, used to check the store's products match the plan. */
   billingPeriod: 'P1Y' | 'P1M';
   hasFreeTrial: boolean;
 };
 
 export const PLANS: Record<PlanId, PlanConfig> = {
-  annual: { productIds: { ios: null, android: null }, billingPeriod: 'P1Y', hasFreeTrial: true },
-  monthly: { productIds: { ios: null, android: null }, billingPeriod: 'P1M', hasFreeTrial: false },
+  annual: { productIds: { ios: null, android: null }, packageId: '$rc_annual', billingPeriod: 'P1Y', hasFreeTrial: true },
+  monthly: { productIds: { ios: null, android: null }, packageId: '$rc_monthly', billingPeriod: 'P1M', hasFreeTrial: false },
 };
+
+/** RevenueCat Test Store products. Never mixed into the App Store or Google Play IDs above. */
+export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly', monthly: 'monthly' };
+
+/**
+ * Each plan's product ID for the store the SDK key belongs to. A `testStore` key is only ever
+ * accepted in development builds, so release builds always get the App Store or Google Play IDs.
+ */
+export function productIdsFor(source: KeySource, platform: StorePlatform): Record<PlanId, string | null> {
+  if (source === 'testStore') return { ...TEST_STORE_PRODUCT_IDS };
+  return { annual: PLANS.annual.productIds[platform], monthly: PLANS.monthly.productIds[platform] };
+}

@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test \".test-build/tests/**/*.test.js\"",
     "simulate": "tsc -p tsconfig.test.json && node .test-build/tests/sim/tuneBubbleBreak.js",
+    "set-test-store-key": "node scripts/set-test-store-key.mjs",
     "web": "expo start --web"
   },
   "dependencies": {
