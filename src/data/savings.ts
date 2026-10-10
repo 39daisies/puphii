@@ -4,6 +4,8 @@
  * puff is not a fixed amount of product.
  */
 
+import { withUnknownFields } from './preserve';
+
 export type ProductType = 'cigarettes' | 'vapePods' | 'disposables' | 'other';
 export const PRODUCT_TYPES: readonly ProductType[] = ['cigarettes', 'vapePods', 'disposables', 'other'];
 
@@ -370,13 +372,13 @@ function sanitizeProduct(type: ProductType, raw: unknown): ProductInputs {
   if (!raw || typeof raw !== 'object') return EMPTY_PRODUCT(type);
   const value = raw as Record<string, unknown>;
   const basis = value.basis === 'rate' || value.basis === 'lasts' ? value.basis : PRODUCTS[type].bases[0];
-  return {
+  return withUnknownFields(raw, {
     price: validOrNull('price', value.price),
     unitsPerPurchase: validOrNull('unitsPerPurchase', value.unitsPerPurchase),
     basis: effectiveBasis(type, basis),
     rate: validOrNull('rate', value.rate),
     lastsDays: validOrNull('lastsDays', value.lastsDays),
-  };
+  });
 }
 
 /** Restores saved calculator settings, replacing anything missing or invalid with an empty value. */
@@ -385,17 +387,17 @@ export function sanitizeSavings(raw: unknown, fallbackCurrency = 'USD'): Savings
   if (!raw || typeof raw !== 'object') return defaults;
   const value = raw as Record<string, unknown>;
   const products = (value.products && typeof value.products === 'object' ? value.products : {}) as Record<string, unknown>;
-  return {
+  return withUnknownFields(raw, {
     productType: (PRODUCT_TYPES as readonly unknown[]).includes(value.productType) ? (value.productType as ProductType) : defaults.productType,
     currency: isSupportedCurrency(value.currency) ? value.currency : defaults.currency,
-    products: {
+    products: withUnknownFields(products, {
       cigarettes: sanitizeProduct('cigarettes', products.cigarettes),
       vapePods: sanitizeProduct('vapePods', products.vapePods),
       disposables: sanitizeProduct('disposables', products.disposables),
       other: sanitizeProduct('other', products.other),
-    },
+    }),
     reductionPercent: clampReduction(value.reductionPercent),
     goalName: typeof value.goalName === 'string' ? value.goalName.slice(0, MAX_GOAL_NAME) : '',
     goalAmount: validOrNull('goalAmount', value.goalAmount),
-  };
+  });
 }

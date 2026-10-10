@@ -1,3 +1,5 @@
+import { withUnknownFields } from '../data/preserve';
+
 /** On-device Bubble Break record. Only finished rounds count; leaving early isn't recorded. */
 export type GameStats = {
   roundsCompleted: number;
@@ -14,12 +16,13 @@ const count = (value: unknown): number =>
 export function sanitizeGameStats(raw: unknown): GameStats {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_GAME_STATS };
   const value = raw as Record<string, unknown>;
-  return { roundsCompleted: count(value.roundsCompleted), bestScore: count(value.bestScore) };
+  return withUnknownFields(raw, { roundsCompleted: count(value.roundsCompleted), bestScore: count(value.bestScore) });
 }
 
 export function recordRound(stats: GameStats, score: number): GameStats {
   const safeScore = count(score);
   return {
+    ...stats,
     roundsCompleted: Math.min(stats.roundsCompleted + 1, MAX_COUNT),
     bestScore: Math.max(stats.bestScore, safeScore),
   };

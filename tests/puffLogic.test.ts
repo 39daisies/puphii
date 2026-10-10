@@ -14,7 +14,7 @@ import {
   sanitizeSettings,
   weeklySeries,
 } from '../src/data/puffLogic';
-import { corruptBackupKey, corruptBackupKeysFor, STORAGE_KEYS } from '../src/data/storageKeys';
+import { corruptBackupKey, setAsideKeysFor, STORAGE_KEYS } from '../src/data/storageKeys';
 import { DEFAULT_SETTINGS, PuffLog } from '../src/data/types';
 import { createWriteQueue } from '../src/data/writeQueue';
 
@@ -221,14 +221,14 @@ describe('data deletion', () => {
   ];
 
   test('clearing history finds every set-aside copy of the puff logs and nothing else', () => {
-    assert.deepEqual(corruptBackupKeysFor(allKeys, [STORAGE_KEYS.logs]), [
+    assert.deepEqual(setAsideKeysFor(allKeys, [STORAGE_KEYS.logs]), [
       '@puphii/puff-logs-v1-corrupt-1',
       '@puphii/puff-logs-v1-corrupt-2',
     ]);
   });
 
   test('a full reset also finds set-aside settings, but never live keys or other libraries', () => {
-    const doomed = corruptBackupKeysFor(allKeys, [STORAGE_KEYS.logs, STORAGE_KEYS.settings]);
+    const doomed = setAsideKeysFor(allKeys, [STORAGE_KEYS.logs, STORAGE_KEYS.settings]);
     assert.equal(doomed.length, 3);
     assert.ok(!doomed.includes(STORAGE_KEYS.logs));
     assert.ok(!doomed.includes(STORAGE_KEYS.settings));

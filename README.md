@@ -40,7 +40,8 @@ npm test                # unit tests for day keys, DST, series, undo, sanitising
 
 - `App.tsx` — font loading, store provider, tab shell.
 - `src/theme/` — colour, spacing, radius, shadow and typography tokens.
-- `src/data/` — puff log types, pure date/count logic, AsyncStorage persistence, serialized write queue and the `PuphiiStore` context.
+- `src/data/` — puff log types, pure date/count logic, AsyncStorage persistence, serialized write queue and the `PuphiiStore` context. `persistence.ts` and `migrations.ts` version the stored data: add a migration instead of renaming a key, and keep fields you don't recognise.
+- `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). The mock is for tests only.
 - `src/mascot/` — face registry, reaction-mode mapping and the animated `Mascot` component.
 - `src/components/` — shared UI (buttons, cards, tab bar, dialogs, chart, settings rows, number/text fields, option sheet, icons, backgrounds).
 - `src/data/insights.ts` — pure period, comparison and time-of-day calculations behind Insights.

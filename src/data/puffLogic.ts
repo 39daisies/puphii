@@ -1,3 +1,4 @@
+import { withUnknownFields } from './preserve';
 import { DEFAULT_SETTINGS, PuffLog, REACTION_MODES, ReactionMode, Settings } from './types';
 
 const pad = (value: number) => String(value).padStart(2, '0');
@@ -118,7 +119,7 @@ export function sanitizeLogs(raw: unknown): PuffLog[] {
     if (typeof id !== 'string' || typeof timestamp !== 'string') continue;
     if (Number.isNaN(new Date(timestamp).getTime()) || seen.has(id)) continue;
     seen.add(id);
-    result.push({ id, timestamp });
+    result.push(withUnknownFields(item, { id, timestamp }));
   }
   return result;
 }
@@ -132,7 +133,7 @@ const isIntInRange = (value: unknown, min: number, max: number): value is number
 export function sanitizeSettings(raw: unknown): Settings {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_SETTINGS };
   const value = raw as Record<string, unknown>;
-  return {
+  return withUnknownFields(raw, {
     mode: isMode(value.mode) ? value.mode : DEFAULT_SETTINGS.mode,
     soundEnabled: typeof value.soundEnabled === 'boolean' ? value.soundEnabled : DEFAULT_SETTINGS.soundEnabled,
     hapticsEnabled: typeof value.hapticsEnabled === 'boolean' ? value.hapticsEnabled : DEFAULT_SETTINGS.hapticsEnabled,
@@ -140,5 +141,5 @@ export function sanitizeSettings(raw: unknown): Settings {
       typeof value.remindersEnabled === 'boolean' ? value.remindersEnabled : DEFAULT_SETTINGS.remindersEnabled,
     reminderHour: isIntInRange(value.reminderHour, 0, 23) ? value.reminderHour : DEFAULT_SETTINGS.reminderHour,
     reminderMinute: isIntInRange(value.reminderMinute, 0, 59) ? value.reminderMinute : DEFAULT_SETTINGS.reminderMinute,
-  };
+  });
 }

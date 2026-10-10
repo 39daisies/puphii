@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_GAME_STATS, GameStats, recordRound } from '../game/gameStats';
+import { AppState } from './appState';
 import { createLog, dayKeyOfLog, latestRecordedLog, localDayKey, removeLogById } from './puffLogic';
+import { RESET_KEYS, resetValues } from './reset';
 import { defaultSavings, deviceCurrency, SavingsSettings } from './savings';
 import { CORRUPT_DATA_MESSAGE, loadPersistedState, removeCorruptBackups, STORAGE_KEYS, writeJson } from './storage';
 import { StorageKey } from './storageKeys';
@@ -9,6 +11,8 @@ import { createWriteQueue } from './writeQueue';
 
 type PuphiiStore = {
   ready: boolean;
+  /** Lifecycle details for future onboarding and offers. Read-only for now. */
+  appState: AppState | null;
   logs: PuffLog[];
   settings: Settings;
   storageError: string | null;
@@ -40,6 +44,7 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [savings, setSavings] = useState<SavingsSettings>(() => defaultSavings(deviceCurrency()));
   const [gameStats, setGameStats] = useState<GameStats>(DEFAULT_GAME_STATS);
+  const [appState, setAppState] = useState<AppState | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
 
   // Refs are the synchronous source of truth so rapid taps never read stale state.
@@ -48,15 +53,21 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
   const savingsRef = useRef<SavingsSettings>(savings);
   const gameStatsRef = useRef<GameStats>(DEFAULT_GAME_STATS);
   const readyRef = useRef(false);
+  // Stays false if storage couldn't be read, so saving can't overwrite history that is still on the device.
+  const canSaveRef = useRef(false);
 
   const queues = useMemo(() => {
     const onError = () => setStorageError(SAVE_ERROR);
     const onSuccess = () => setStorageError((current) => (current === SAVE_ERROR ? null : current));
+    const queue = <T,>(key: StorageKey) => {
+      const write = writeJson<T>(key);
+      return createWriteQueue<T>((value) => (canSaveRef.current ? write(value) : Promise.resolve()), onError, onSuccess);
+    };
     return {
-      logs: createWriteQueue(writeJson<PuffLog[]>(STORAGE_KEYS.logs), onError, onSuccess),
-      settings: createWriteQueue(writeJson<Settings>(STORAGE_KEYS.settings), onError, onSuccess),
-      savings: createWriteQueue(writeJson<SavingsSettings>(STORAGE_KEYS.savings), onError, onSuccess),
-      game: createWriteQueue(writeJson<GameStats>(STORAGE_KEYS.game), onError, onSuccess),
+      logs: queue<PuffLog[]>(STORAGE_KEYS.logs),
+      settings: queue<Settings>(STORAGE_KEYS.settings),
+      savings: queue<SavingsSettings>(STORAGE_KEYS.savings),
+      game: queue<GameStats>(STORAGE_KEYS.game),
     };
   }, []);
 
@@ -72,7 +83,9 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       setSettings(result.settings);
       setSavings(result.savings);
       setGameStats(result.gameStats);
+      setAppState(result.appState);
       setStorageError(result.error);
+      canSaveRef.current = result.canSave;
       readyRef.current = true;
       setReady(true);
     });
@@ -114,6 +127,7 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
   );
 
   const purgeBackups = useCallback((keys: StorageKey[]) => {
+    if (!canSaveRef.current) return;
     removeCorruptBackups(keys).then(
       () => setStorageError((current) => (current === CORRUPT_DATA_MESSAGE ? null : current)),
       () => setStorageError(DELETE_ERROR),
@@ -163,22 +177,24 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
 
   const resetAll = useCallback(() => {
     if (!readyRef.current) return;
-    commitLogs([]);
-    gameStatsRef.current = { ...DEFAULT_GAME_STATS };
+    const reset = resetValues(deviceCurrency());
+    commitLogs(reset.logs);
+    gameStatsRef.current = reset.gameStats;
     setGameStats(gameStatsRef.current);
     queues.game.save(gameStatsRef.current);
-    settingsRef.current = { ...DEFAULT_SETTINGS };
+    settingsRef.current = reset.settings;
     setSettings(settingsRef.current);
     queues.settings.save(settingsRef.current);
-    savingsRef.current = defaultSavings(deviceCurrency());
+    savingsRef.current = reset.savings;
     setSavings(savingsRef.current);
     queues.savings.save(savingsRef.current);
-    purgeBackups([STORAGE_KEYS.logs, STORAGE_KEYS.settings, STORAGE_KEYS.savings, STORAGE_KEYS.game]);
+    purgeBackups([...RESET_KEYS]);
   }, [commitLogs, queues, purgeBackups]);
 
   const value = useMemo<PuphiiStore>(
     () => ({
       ready,
+      appState,
       logs,
       settings,
       storageError,
@@ -196,6 +212,7 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       ready,
+      appState,
       logs,
       settings,
       savings,

@@ -17,7 +17,7 @@ import {
   SavingsSettings,
   savingsScenario,
 } from '../src/data/savings';
-import { corruptBackupKey, corruptBackupKeysFor, STORAGE_KEYS } from '../src/data/storageKeys';
+import { corruptBackupKey, setAsideKeysFor, STORAGE_KEYS } from '../src/data/storageKeys';
 import { createWriteQueue } from '../src/data/writeQueue';
 
 const inputs = (patch: Partial<ProductInputs>): ProductInputs => ({
@@ -283,6 +283,6 @@ describe('calculator persistence', () => {
 
   test('a full reset also finds set-aside copies of calculator data', () => {
     const keys = [STORAGE_KEYS.savings, corruptBackupKey(STORAGE_KEYS.savings, 7), corruptBackupKey(STORAGE_KEYS.logs, 8)];
-    assert.deepEqual(corruptBackupKeysFor(keys, [STORAGE_KEYS.savings]), ['@puphii/savings-v1-corrupt-7']);
+    assert.deepEqual(setAsideKeysFor(keys, [STORAGE_KEYS.savings]), ['@puphii/savings-v1-corrupt-7']);
   });
 });

@@ -24,7 +24,9 @@ Searches covered `fetch`, `XMLHttpRequest`, `WebSocket`, URLs, `console.*`, `Lin
 | Settings (reaction mode, sound, haptics, reminder on/off and time) | AsyncStorage key `@puphii/settings-v1` | No |
 | Savings calculator inputs (product type, prices, usage, currency, reduction percentage, optional goal name and amount). No bank, card or other financial account details. | AsyncStorage key `@puphii/savings-v1` | No |
 | Bubble Break record (number of completed rounds and best score). Individual rounds and taps are not stored. | AsyncStorage key `@puphii/bubble-break-v1` | No |
-| Set-aside copies of unreadable data | AsyncStorage keys `…-corrupt-<timestamp>` | No |
+| App lifecycle state (first launch time and how it was recorded, onboarding completion, experiment assignments; currently none). Kept by "Reset everything". | AsyncStorage key `@puphii/app-state-v1` | No |
+| Storage schema version | AsyncStorage key `@puphii/schema` | No |
+| Set-aside copies of data that was unreadable (`corrupt`), had values this version couldn't use (`invalid`), or was about to be changed by a migration (`premigration`). Deleted with the data they copy. | AsyncStorage keys `…-<reason>-<timestamp>` | No |
 | Daily reminder | iOS/Android local notification scheduler | No (local notifications do not use APNs/FCM) |
 
 Puff logs are sensitive even though they stay local: they reveal smoking or vaping behaviour and its timing. Puphii **processes** this information on the device. It does not **collect** it in the App Store sense (transmitting it off the device), because no code path sends it anywhere.
