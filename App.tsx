@@ -12,6 +12,9 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { EntitlementProvider } from './src/subscription/EntitlementProvider';
 import { colors, fontAssets } from './src/theme';
 
+// Development-only tools. Metro drops this require from production bundles, where __DEV__ is false.
+const DevTools: React.ComponentType | null = __DEV__ ? require('./src/dev/TestStoreHarness').TestStoreHarnessHost : null;
+
 export default function App() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
 
@@ -30,6 +33,7 @@ export default function App() {
         <PuphiiProvider>
           <EntitlementProvider>
             <AppShell />
+            {DevTools ? <DevTools /> : null}
           </EntitlementProvider>
         </PuphiiProvider>
       )}

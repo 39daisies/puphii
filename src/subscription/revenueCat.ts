@@ -8,7 +8,7 @@ import {
   TrialEligibility,
   VerificationErrorKind,
 } from './entitlement';
-import { SdkKeyCheck } from './sdkKeys';
+import { SdkKeyCheck, SdkKeyProblem } from './sdkKeys';
 
 /** The RevenueCat calls Puphii makes. The app passes the real SDK; tests pass a fake. */
 export interface PurchasesSdk {
@@ -85,11 +85,13 @@ const MESSAGES: Record<VerificationErrorKind, string> = {
   unknown: "The subscription status couldn't be checked.",
 };
 
-const KEY_MESSAGES: Record<Exclude<SdkKeyCheck, { ok: true }>['reason'], string> = {
+export const KEY_MESSAGES: Record<SdkKeyProblem, string> = {
   missing: 'No RevenueCat public SDK key is set for this platform.',
   secretKey: 'A RevenueCat secret key was supplied. Only public SDK keys may be used in the app.',
   wrongPlatform: "The RevenueCat SDK key belongs to the other platform's store.",
-  testStoreKey: 'RevenueCat Test Store keys are only allowed in development builds.',
+  testStoreKey:
+    'A RevenueCat Test Store key was supplied as a store key. Test Store keys go in EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY and only work in development builds.',
+  notTestStoreKey: "EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY doesn't hold a Test Store key (test_…).",
   malformed: "The RevenueCat SDK key isn't in a recognised format.",
   unsupportedPlatform: 'Subscriptions are only available on iOS and Android.',
 };

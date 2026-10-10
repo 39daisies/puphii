@@ -17,7 +17,7 @@ import {
   trialEligibilityFrom,
   VERIFICATION_FAILED,
 } from '../src/subscription/revenueCat';
-import { checkSdkKey, SdkKeyCheck } from '../src/subscription/sdkKeys';
+import { checkSdkKey, checkTestStoreKey, SdkKeyCheck, selectSdkKey } from '../src/subscription/sdkKeys';
 
 // Shipped with react-native-purchases; loads in Node, unlike the React Native package itself.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -26,8 +26,7 @@ const rc = require('@revenuecat/purchases-typescript-internal');
 /** Test-only identifiers. The app's real ones are still unset placeholders. */
 const ENTITLEMENT = 'test-entitlement';
 const PRODUCTS = { annual: 'test.annual', monthly: 'test.monthly' };
-const IOS_KEY: SdkKeyCheck = { ok: true, apiKey: 'appl_TestOnlyKey123' };
-const STORE_KEYS_ONLY = { allowTestStore: false };
+const IOS_KEY: SdkKeyCheck = { ok: true, apiKey: 'appl_TestOnlyKey123', source: 'platform' };
 type Verified = PurchasesEntitlementInfo['verification'];
 const REQUEST_DATE = '2026-10-10T12:00:00.000Z';
 const DAY = 24 * 60 * 60 * 1000;
@@ -155,25 +154,61 @@ function sourceFiles(dir: string): string[] {
 
 describe('RevenueCat SDK keys', () => {
   test('accepts only the public key for the running platform', () => {
-    assert.deepEqual(checkSdkKey('ios', ' appl_abc123 ', STORE_KEYS_ONLY), { ok: true, apiKey: 'appl_abc123' });
-    assert.deepEqual(checkSdkKey('android', 'goog_abc123', STORE_KEYS_ONLY), { ok: true, apiKey: 'goog_abc123' });
-    assert.deepEqual(checkSdkKey('ios', 'goog_abc123', STORE_KEYS_ONLY), { ok: false, reason: 'wrongPlatform' });
-    assert.deepEqual(checkSdkKey('android', 'appl_abc123', STORE_KEYS_ONLY), { ok: false, reason: 'wrongPlatform' });
-    assert.deepEqual(checkSdkKey('android', 'amzn_abc123', STORE_KEYS_ONLY), { ok: false, reason: 'wrongPlatform' });
+    assert.deepEqual(checkSdkKey('ios', ' appl_abc123 '), { ok: true, apiKey: 'appl_abc123', source: 'platform' });
+    assert.deepEqual(checkSdkKey('android', 'goog_abc123'), { ok: true, apiKey: 'goog_abc123', source: 'platform' });
+    assert.deepEqual(checkSdkKey('ios', 'goog_abc123'), { ok: false, reason: 'wrongPlatform' });
+    assert.deepEqual(checkSdkKey('android', 'appl_abc123'), { ok: false, reason: 'wrongPlatform' });
+    assert.deepEqual(checkSdkKey('android', 'amzn_abc123'), { ok: false, reason: 'wrongPlatform' });
   });
 
   test('refuses secret keys, missing keys and anything malformed', () => {
-    assert.deepEqual(checkSdkKey('ios', 'sk_abc123', STORE_KEYS_ONLY), { ok: false, reason: 'secretKey' });
-    assert.deepEqual(checkSdkKey('ios', undefined, STORE_KEYS_ONLY), { ok: false, reason: 'missing' });
-    assert.deepEqual(checkSdkKey('ios', '   ', STORE_KEYS_ONLY), { ok: false, reason: 'missing' });
-    assert.deepEqual(checkSdkKey('ios', 'appl_abc 123', STORE_KEYS_ONLY), { ok: false, reason: 'malformed' });
-    assert.deepEqual(checkSdkKey('ios', 'abc123', STORE_KEYS_ONLY), { ok: false, reason: 'malformed' });
-    assert.deepEqual(checkSdkKey('web', 'appl_abc123', STORE_KEYS_ONLY), { ok: false, reason: 'unsupportedPlatform' });
+    assert.deepEqual(checkSdkKey('ios', 'sk_abc123'), { ok: false, reason: 'secretKey' });
+    assert.deepEqual(checkSdkKey('ios', undefined), { ok: false, reason: 'missing' });
+    assert.deepEqual(checkSdkKey('ios', '   '), { ok: false, reason: 'missing' });
+    assert.deepEqual(checkSdkKey('ios', 'appl_abc 123'), { ok: false, reason: 'malformed' });
+    assert.deepEqual(checkSdkKey('ios', 'abc123'), { ok: false, reason: 'malformed' });
+    assert.deepEqual(checkSdkKey('web', 'appl_abc123'), { ok: false, reason: 'unsupportedPlatform' });
   });
 
-  test('Test Store keys are only usable when explicitly allowed (development)', () => {
-    assert.deepEqual(checkSdkKey('ios', 'test_abc123', STORE_KEYS_ONLY), { ok: false, reason: 'testStoreKey' });
-    assert.deepEqual(checkSdkKey('ios', 'test_abc123', { allowTestStore: true }), { ok: true, apiKey: 'test_abc123' });
+  test('store key variables never accept a Test Store key, in any build', () => {
+    assert.deepEqual(checkSdkKey('ios', 'test_abc123'), { ok: false, reason: 'testStoreKey' });
+    assert.deepEqual(checkSdkKey('android', 'test_abc123'), { ok: false, reason: 'testStoreKey' });
+    for (const isDevelopmentBuild of [true, false]) {
+      assert.deepEqual(selectSdkKey({ platform: 'ios', platformKey: 'test_abc123', testStoreKey: undefined, isDevelopmentBuild }), {
+        ok: false,
+        reason: 'testStoreKey',
+      });
+    }
+  });
+
+  test('the Test Store key is used only in development builds', () => {
+    const inputs = { platform: 'ios', platformKey: 'appl_abc123', testStoreKey: 'test_abc123' };
+    assert.deepEqual(selectSdkKey({ ...inputs, isDevelopmentBuild: true }), { ok: true, apiKey: 'test_abc123', source: 'testStore' });
+    assert.deepEqual(selectSdkKey({ ...inputs, isDevelopmentBuild: false }), { ok: true, apiKey: 'appl_abc123', source: 'platform' });
+    assert.deepEqual(selectSdkKey({ ...inputs, platformKey: undefined, isDevelopmentBuild: false }), { ok: false, reason: 'missing' });
+    assert.deepEqual(selectSdkKey({ ...inputs, platform: 'android', platformKey: 'goog_abc123', isDevelopmentBuild: true }), {
+      ok: true,
+      apiKey: 'test_abc123',
+      source: 'testStore',
+    });
+  });
+
+  test('without a Test Store key, development builds use the store key', () => {
+    for (const testStoreKey of [undefined, '', '  ']) {
+      assert.deepEqual(selectSdkKey({ platform: 'ios', platformKey: 'appl_abc123', testStoreKey, isDevelopmentBuild: true }), {
+        ok: true,
+        apiKey: 'appl_abc123',
+        source: 'platform',
+      });
+    }
+  });
+
+  test('a bad Test Store key is reported, never swapped for the store key', () => {
+    const select = (testStoreKey: string) => selectSdkKey({ platform: 'ios', platformKey: 'appl_abc123', testStoreKey, isDevelopmentBuild: true });
+    assert.deepEqual(select('appl_abc123'), { ok: false, reason: 'notTestStoreKey' });
+    assert.deepEqual(select('sk_abc123'), { ok: false, reason: 'secretKey' });
+    assert.deepEqual(select('test abc'), { ok: false, reason: 'malformed' });
+    assert.deepEqual(checkTestStoreKey('web', 'test_abc123'), { ok: false, reason: 'unsupportedPlatform' });
   });
 });
 
@@ -202,7 +237,7 @@ describe('RevenueCat setup', () => {
   });
 
   test('a secret key is reported as such, never sent anywhere', () => {
-    const { service } = setup({ key: checkSdkKey('ios', 'sk_notReal', STORE_KEYS_ONLY) });
+    const { service } = setup({ key: checkSdkKey('ios', 'sk_notReal') });
     service.start();
     const state = service.current();
     assert.ok(state.status === 'error' && /secret key/.test(state.error.message));

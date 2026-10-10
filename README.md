@@ -38,8 +38,9 @@ Subscriptions use RevenueCat (`react-native-purchases`), which needs native code
 
 The SDK only starts when all of these are set; until then the status is "not configured" and no RevenueCat request is made:
 
-- `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY` — the **public** SDK keys (`appl_…`, `goog_…`). Copy `.env.example` to `.env.local` (git-ignored) and restart `npx expo start`: a development build loads its JavaScript, keys included, from your local server. Builds that embed their JavaScript (later preview and store builds) need the same variables in the matching EAS environment, because `.env.local` is not uploaded. Secret keys (`sk_…`) are refused and must never be added. RevenueCat Test Store keys (`test_…`) are accepted in development builds only.
-- `REVENUECAT_ENTITLEMENT_ID` and each plan's `productIds` in `src/subscription/config.ts` — currently `null` placeholders, to be filled in once the RevenueCat entitlement and the App Store / Google Play products exist. On Android, product IDs take the form `subscriptionId:basePlanId`.
+- `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY` — the **public** SDK keys (`appl_…`, `goog_…`). Copy `.env.example` to `.env.local` (git-ignored) and restart `npx expo start`: a development build loads its JavaScript, keys included, from your local server. Builds that embed their JavaScript (later preview and store builds) need the same variables in the matching EAS environment, because `.env.local` is not uploaded. Secret keys (`sk_…`) are refused and must never be added. Test Store keys (`test_…`) are refused here; they have their own variable (see below).
+- `REVENUECAT_ENTITLEMENT_ID` in `src/subscription/config.ts` — `null` until the entitlement exists in RevenueCat; needed for the Test Store too.
+- Each plan's `productIds` in `src/subscription/config.ts` — `null` until the App Store / Google Play products exist. On Android, they take the form `subscriptionId:basePlanId`. Not needed for the Test Store: its products are read from RevenueCat.
 
 Build and install (requires an Expo account; `eas build` links the project on first run, adding the EAS project ID to `app.json`):
 
@@ -51,6 +52,31 @@ npx expo start --dev-client                                         # then open 
 ```
 
 `eas.json` only adds development profiles; the bundle identifier and Android package stay `com.puphii.app`. Native `ios/` and `android/` folders are not committed: they are generated during the build.
+
+### RevenueCat Test Store (development builds only)
+
+The Test Store simulates purchases without App Store Connect or Google Play: RevenueCat shows its own purchase sheet with buttons for a successful purchase, a failed purchase or cancelling. Nothing is charged. Results are real RevenueCat data (marked sandbox), so subscription status comes back through the normal entitlement service.
+
+Safeguards: the Test Store key is read only when `__DEV__` is true, so release bundles don't contain it (checked by exporting production bundles); the store key variables refuse `test_…` keys; and RevenueCat's native SDK itself crashes on purpose if a release build is configured with a Test Store key. The test screen is also left out of release bundles.
+
+Set up in the RevenueCat dashboard (choose your own identifiers; none are assumed by the app):
+
+1. **Test Store and key.** *Apps and providers → Test configuration*: new projects already have a Test Store; otherwise create one. Copy its API key (`test_…`, also listed under *Project settings → API keys*).
+2. **Entitlement.** *Product catalog → Entitlements → New*. This identifier is permanent and is the one the real stores will use later. Put it in `REVENUECAT_ENTITLEMENT_ID` in `src/subscription/config.ts`.
+3. **Test Store products.** *Product catalog → Products → New*, store "Test Store": an annual product (1 year, $29.99) and a monthly product (1 month, $4.99). If the form offers a free trial, give only the annual product a 7-day trial. Price and duration can't be edited after saving; create a new product instead.
+4. **Attach both products** to the entitlement.
+5. **Offering.** *Product catalog → Offerings → New*, with an Annual package (`$rc_annual`) holding the annual product and a Monthly package (`$rc_monthly`) holding the monthly one. Make it the current (default) offering.
+6. **Sandbox access.** Check that *Sandbox Testing Access* lets test purchases grant entitlements to anonymous users.
+
+Then run it:
+
+```bash
+cp .env.example .env.local     # set EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY=test_…
+npx eas-cli build --profile development-simulator --platform ios   # or --profile development for a device / Android
+npx expo start --dev-client --clear
+```
+
+Open the app in the development build, open the developer menu (shake the device, press `m` in the terminal, or `⌃⌘Z` in the iOS Simulator) and choose **RevenueCat Test Store**. The screen lists the products and prices RevenueCat returns, buys a package (try success, failure and cancel), restores, refreshes, and shows both the app's subscription status and the raw customer info. Buying is disabled unless the Test Store key is in use. Test subscriptions renew every 5 minutes (monthly) or every hour (annual), up to 5 times, then expire. Nothing is saved on the device, and no puff logs, settings or other app data are sent to RevenueCat. Expo Go can't make these purchases; use a development build.
 
 ## Checks
 
@@ -65,6 +91,7 @@ npm test                # unit tests for day keys, DST, series, undo, sanitising
 - `src/theme/` — colour, spacing, radius, shadow and typography tokens.
 - `src/data/` — puff log types, pure date/count logic, AsyncStorage persistence, serialized write queue and the `PuphiiStore` context. `persistence.ts` and `migrations.ts` version the stored data: add a migration instead of renaming a key, and keep fields you don't recognise.
 - `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). `revenueCat.ts` turns RevenueCat customer info into an entitlement and keeps it current (foreground refresh, update listener, offline handling); `revenueCatSdk.ts` is the only file that touches the native SDK; `EntitlementProvider` makes the status available to the app. The mock is for tests only.
+- `src/dev/` — development-only tools, loaded by `App.tsx` behind `__DEV__` and absent from release bundles: the RevenueCat Test Store screen (`TestStoreHarness.tsx`) and its logic (`testStoreHarness.ts`).
 - `src/mascot/` — face registry, reaction-mode mapping and the animated `Mascot` component.
 - `src/components/` — shared UI (buttons, cards, tab bar, dialogs, chart, settings rows, number/text fields, option sheet, icons, backgrounds).
 - `src/data/insights.ts` — pure period, comparison and time-of-day calculations behind Insights.
