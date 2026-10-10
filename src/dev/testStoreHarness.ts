@@ -1,6 +1,6 @@
-import type { CustomerInfo, MakePurchaseResult, PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
+import type { CustomerInfo, MakePurchaseResult, PurchasesOffering, PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
 import { Entitlement, PlanId, RestoreResult } from '../subscription/entitlement';
-import { classifyError } from '../subscription/revenueCat';
+import { errorDetail } from '../subscription/revenueCat';
 
 /**
  * Development-only harness for RevenueCat Test Store purchases. Nothing here is stored: the
@@ -48,69 +48,102 @@ function describeIntro(pkg: PurchasesPackage): string | null {
   return intro.price === 0 ? `Free trial: ${length}` : `Introductory price ${intro.priceString} for ${length}`;
 }
 
-/** Every package RevenueCat returned, current offering first. */
-export function productRows(offerings: PurchasesOfferings): ProductRow[] {
-  const currentId = offerings.current?.identifier ?? null;
-  const ordered = Object.values(offerings.all).sort(
-    (a, b) => Number(b.identifier === currentId) - Number(a.identifier === currentId) || a.identifier.localeCompare(b.identifier),
-  );
-  return ordered.flatMap((offering) =>
-    offering.availablePackages.map((pkg) => ({
-      key: `${offering.identifier}/${pkg.identifier}`,
-      offering: offering.identifier,
-      isCurrentOffering: offering.identifier === currentId,
-      packageId: pkg.identifier,
-      productId: pkg.product.identifier,
-      title: pkg.product.title,
-      price: pkg.product.priceString,
-      period: pkg.product.subscriptionPeriod,
-      introOffer: describeIntro(pkg),
-      pkg,
-    })),
-  );
+/** The offering with this identifier, current or not, or null if RevenueCat didn't return it. */
+export function findOffering(offerings: PurchasesOfferings, identifier: string): PurchasesOffering | null {
+  return Object.prototype.hasOwnProperty.call(offerings.all, identifier) ? offerings.all[identifier] : null;
 }
 
-export type ExpectedPlan = { packageId: string; productId: string | null; billingPeriod: string; hasFreeTrial: boolean };
+function offeringNames(offerings: PurchasesOfferings): string {
+  const currentId = offerings.current?.identifier;
+  const names = Object.keys(offerings.all).sort().map((id) => (id === currentId ? `${id} (current)` : id));
+  return names.length ? names.join(', ') : 'none';
+}
+
+/** Why the expected offering can't be used, or null when it can. */
+export function missingOfferingMessage(offerings: PurchasesOfferings, identifier: string): string | null {
+  const offering = findOffering(offerings, identifier);
+  if (!offering) return `RevenueCat didn't return the offering "${identifier}". Offerings returned: ${offeringNames(offerings)}.`;
+  if (!offering.availablePackages.length) return `The offering "${identifier}" has no packages.`;
+  return null;
+}
+
+/** The packages of one offering, loaded by identifier rather than as the current offering. */
+export function productRows(offering: PurchasesOffering, currentId: string | null): ProductRow[] {
+  return offering.availablePackages.map((pkg) => ({
+    key: `${offering.identifier}/${pkg.identifier}`,
+    offering: offering.identifier,
+    isCurrentOffering: offering.identifier === currentId,
+    packageId: pkg.identifier,
+    productId: pkg.product.identifier,
+    title: pkg.product.title,
+    price: pkg.product.priceString,
+    period: pkg.product.subscriptionPeriod,
+    introOffer: describeIntro(pkg),
+    pkg,
+  }));
+}
+
+export type ExpectedPlan = {
+  packageId: string;
+  productId: string;
+  billingPeriod: string;
+  price: { amount: number; currencyCode: string };
+  /** Length of the free trial, or null when the product must have no introductory offer at all. */
+  freeTrialDays: number | null;
+};
 export type ExpectedOffering = { offeringId: string; plans: Record<PlanId, ExpectedPlan> };
 export type OfferingCheck = { ok: boolean; lines: string[] };
 
-function checkPlan(plan: PlanId, want: ExpectedPlan, pkg: PurchasesPackage | undefined): { ok: boolean; line: string } {
-  if (!pkg) return { ok: false, line: `Mismatch ${plan}: package ${want.packageId} is not in the current offering.` };
+const DAYS_PER_UNIT: Record<string, number> = { DAY: 1, WEEK: 7 };
+
+/** The introductory offer's length in days, or null when it is measured in months or years. */
+function introDays(pkg: PurchasesPackage): number | null {
+  const intro = pkg.product.introPrice;
+  const perUnit = intro ? DAYS_PER_UNIT[intro.periodUnit] : undefined;
+  return intro && perUnit ? perUnit * intro.periodNumberOfUnits * (intro.cycles >= 1 ? intro.cycles : 1) : null;
+}
+
+const sameAmount = (a: number, b: number) => Math.round(a * 100) === Math.round(b * 100);
+
+function checkPlan(plan: PlanId, want: ExpectedPlan, pkg: PurchasesPackage | undefined, offeringId: string): { ok: boolean; line: string } {
+  if (!pkg) return { ok: false, line: `Mismatch ${plan}: package ${want.packageId} is not in the offering "${offeringId}".` };
   const { product } = pkg;
   const problems: string[] = [];
-  if (want.productId === null) problems.push('no product ID is configured for this store');
-  else if (product.identifier !== want.productId) problems.push(`product is ${product.identifier}, expected ${want.productId}`);
+  if (product.identifier !== want.productId) problems.push(`product is ${product.identifier}, expected ${want.productId}`);
   if (product.subscriptionPeriod !== want.billingPeriod) {
     problems.push(`period is ${product.subscriptionPeriod ?? 'none'}, expected ${want.billingPeriod}`);
   }
+  if (product.currencyCode !== want.price.currencyCode || !sameAmount(product.price, want.price.amount)) {
+    problems.push(`price is ${product.price} ${product.currencyCode}, expected ${want.price.amount} ${want.price.currencyCode}`);
+  }
   const intro = describeIntro(pkg);
-  const hasFreeTrial = product.introPrice?.price === 0;
-  if (want.hasFreeTrial && !hasFreeTrial) problems.push(intro ? `expected a free trial, found "${intro}"` : 'expected a free trial, found none');
-  if (!want.hasFreeTrial && intro) problems.push(`expected no introductory offer, found "${intro}"`);
-  const summary = `${pkg.identifier} → ${product.identifier}, ${product.subscriptionPeriod ?? 'no period'}, ${product.priceString}, ${intro ?? 'no trial'}`;
+  if (want.freeTrialDays === null) {
+    if (intro) problems.push(`expected no introductory offer, found "${intro}"`);
+  } else if (product.introPrice?.price !== 0) {
+    problems.push(intro ? `expected a ${want.freeTrialDays}-day free trial, found "${intro}"` : `expected a ${want.freeTrialDays}-day free trial, found none`);
+  } else if (introDays(pkg) !== want.freeTrialDays) {
+    problems.push(`expected a ${want.freeTrialDays}-day free trial, found "${intro}"`);
+  }
+  const summary = `${pkg.identifier} → ${product.identifier}, ${product.subscriptionPeriod ?? 'no period'}, ${product.priceString} (${product.price} ${product.currencyCode}), ${intro ?? 'no trial'}`;
   return problems.length
     ? { ok: false, line: `Mismatch ${plan}: ${problems.join('; ')} (${summary})` }
     : { ok: true, line: `OK ${plan}: ${summary}` };
 }
 
 /**
- * Compares the current offering with the app's configuration: offering, packages, product IDs,
- * billing periods and whether there is a free trial. Prices and trial lengths are shown but not
- * judged, since they live in the store, not in the app.
+ * Compares one offering, looked up by identifier, with what it is set up to contain: packages,
+ * product IDs, billing periods, prices and the free trial, all as the SDK reports them. Whether
+ * a given customer is still eligible for the trial is a separate question RevenueCat answers.
  */
 export function checkOffering(offerings: PurchasesOfferings, expected: ExpectedOffering): OfferingCheck {
-  const current = offerings.current;
-  if (!current) return { ok: false, lines: [`Mismatch: RevenueCat has no current offering; expected "${expected.offeringId}".`] };
-  const offeringOk = current.identifier === expected.offeringId;
-  const lines = [
-    offeringOk
-      ? `OK current offering: ${current.identifier}`
-      : `Mismatch: current offering is "${current.identifier}", expected "${expected.offeringId}".`,
-  ];
-  let ok = offeringOk;
+  const offering = findOffering(offerings, expected.offeringId);
+  if (!offering) return { ok: false, lines: [`Mismatch: ${missingOfferingMessage(offerings, expected.offeringId)}`] };
+  const lines = [`OK offering: ${offering.identifier}${offering.identifier === offerings.current?.identifier ? ' (current)' : ' (loaded by identifier; not current)'}`];
+  let ok = true;
   for (const plan of ['annual', 'monthly'] as const) {
     const want = expected.plans[plan];
-    const result = checkPlan(plan, want, current.availablePackages.find((pkg) => pkg.identifier === want.packageId));
+    const pkg = offering.availablePackages.find((candidate) => candidate.identifier === want.packageId);
+    const result = checkPlan(plan, want, pkg, offering.identifier);
     ok &&= result.ok;
     lines.push(result.line);
   }
@@ -123,17 +156,6 @@ export type PurchaseOutcome =
   | { kind: 'simulatedFailure'; detail: string }
   | { kind: 'pending' }
   | { kind: 'failed'; detail: string };
-
-function errorDetail(error: unknown): string {
-  const e = (error ?? {}) as { code?: unknown; readableErrorCode?: unknown; message?: unknown; underlyingErrorMessage?: unknown };
-  const parts = [
-    typeof e.code === 'string' ? `code ${e.code}` : null,
-    typeof e.readableErrorCode === 'string' ? e.readableErrorCode : null,
-    typeof e.message === 'string' ? e.message : null,
-    typeof e.underlyingErrorMessage === 'string' && e.underlyingErrorMessage ? e.underlyingErrorMessage : null,
-  ].filter(Boolean);
-  return parts.length ? parts.join(' · ') : classifyError(error).message;
-}
 
 export function purchaseErrorOutcome(error: unknown): PurchaseOutcome {
   const e = (error ?? {}) as { code?: unknown; userCancelled?: unknown };
@@ -193,8 +215,54 @@ export function summarizeCustomer(info: CustomerInfo, entitlementId: string | nu
   };
 }
 
+/**
+ * Whether a purchase that didn't complete left the customer's entitlement as it was. This is
+ * separate from the purchase result: a failed purchase by a subscribed customer must leave them
+ * subscribed, and one by an unsubscribed customer must not grant anything.
+ */
+export type EntitlementCheck = { tone: 'unchanged' | 'changed' | 'unverified'; message: string };
+
+type EntitlementState = CustomerSummary['entitlement'];
+
+function describeEntitlementState(id: string, entry: EntitlementState): string {
+  if (!entry) return `${id} has never been granted`;
+  if (!entry.isActive) return `${id} is inactive (last product ${entry.productIdentifier})`;
+  return `${id} is active (${entry.productIdentifier}, ${entry.periodType.toLowerCase()}, expires ${entry.expirationDate ?? 'never'})`;
+}
+
+export function checkEntitlementUnchanged(
+  entitlementId: string | null,
+  before: CustomerSummary | null,
+  after: CustomerSummary | null,
+): EntitlementCheck {
+  if (!entitlementId) return { tone: 'unverified', message: "Can't check the subscription: no entitlement identifier is configured." };
+  if (!before || !after) {
+    return { tone: 'unverified', message: `Couldn't read customer info ${before ? 'after' : 'before'} the purchase attempt, so ${entitlementId} wasn't checked.` };
+  }
+  const was = before.entitlement;
+  const now = after.entitlement;
+  const changed = Boolean(was?.isActive) !== Boolean(now?.isActive) || (now?.isActive === true && was?.productIdentifier !== now.productIdentifier);
+  if (changed) {
+    return {
+      tone: 'changed',
+      message: `Subscription changed during a purchase that didn't complete: before, ${describeEntitlementState(entitlementId, was)}; now, ${describeEntitlementState(entitlementId, now)}. A scheduled sandbox renewal or expiry can also cause this.`,
+    };
+  }
+  return {
+    tone: 'unchanged',
+    message: now?.isActive
+      ? `Existing subscription kept: ${describeEntitlementState(entitlementId, now)}.`
+      : `Nothing granted: ${describeEntitlementState(entitlementId, now)}.`,
+  };
+}
+
+/** RevenueCat's SDK answers "eligible" for any Test Store product with a trial, whatever the customer has used. */
+export const TEST_STORE_TRIAL_NOTE =
+  'Test Store: RevenueCat reports every product with a trial as eligible, even after this customer used it, so ineligibility can’t be tested here.';
+
 /** Plain-text lines describing the app's current entitlement, for the harness screen. */
-export function describeEntitlement(entitlement: Entitlement): string[] {
+export function describeEntitlement(entitlement: Entitlement, { testStore = false }: { testStore?: boolean } = {}): string[] {
+  if (testStore && entitlement.status === 'inactive') return [...describeEntitlement(entitlement), TEST_STORE_TRIAL_NOTE];
   switch (entitlement.status) {
     case 'unknown':
       return ['Status: checking'];
@@ -215,10 +283,65 @@ export function describeEntitlement(entitlement: Entitlement): string[] {
   }
 }
 
+export function describeRestore(result: RestoreResult): string {
+  switch (result.outcome) {
+    case 'failed':
+      return `Restore failed (${result.error.kind}): ${result.error.message}`;
+    case 'restored':
+      return 'Restore found an active subscription.';
+    case 'nothingToRestore':
+      return 'Restore completed: no subscription found.';
+    case 'foundInactive':
+      return result.entitlement.status === 'billingRetry'
+        ? 'Restore found a subscription whose renewal is failing: no access until payment is fixed in the App Store or Google Play.'
+        : `Restore found a subscription that has ended (${describeEntitlement(result.entitlement)[0]}). Nothing to unlock.`;
+  }
+}
+
+/** Lets a development-only button open the Test Store screen, which the development menu also opens. */
+export function createOpenRequests() {
+  const listeners = new Set<() => void>();
+  return {
+    request() {
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener: () => void): () => void {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
 export type HarnessAction = 'loadingProducts' | 'purchasing' | 'restoring' | 'refreshing';
+
+/** The latest purchase attempt, shown next to the Buy buttons. */
+export type PurchaseStatus = { tone: 'progress' | 'success' | 'info' | 'error'; message: string };
+
+const OUTCOME_TONE: Record<PurchaseOutcome['kind'], PurchaseStatus['tone']> = {
+  purchased: 'success',
+  cancelled: 'info',
+  pending: 'info',
+  simulatedFailure: 'error',
+  failed: 'error',
+};
+
+/** A purchase result without a product or customer info is reported, not trusted. */
+export function purchasedOutcome(result: unknown): PurchaseOutcome {
+  const r = (result ?? null) as Partial<MakePurchaseResult> | null;
+  if (!r || typeof r.productIdentifier !== 'string' || !r.customerInfo) {
+    return { kind: 'failed', detail: 'RevenueCat returned an unexpected purchase result (no product or customer info).' };
+  }
+  return { kind: 'purchased', productId: r.productIdentifier };
+}
 
 export type HarnessState = {
   busy: HarnessAction | null;
+  /** Null until a purchase is attempted. */
+  purchaseStatus: PurchaseStatus | null;
+  /** Set after a purchase that didn't complete; null otherwise. */
+  entitlementCheck: EntitlementCheck | null;
   products: ProductRow[];
   /** Null until products have been requested. */
   productsMessage: string | null;
@@ -255,7 +378,7 @@ export function createTestStoreHarness({
   usingTestStore: boolean;
   expected: ExpectedOffering;
 }): TestStoreHarness {
-  let state: HarnessState = { busy: null, products: [], productsMessage: null, offeringCheck: null, customer: null, log: [] };
+  let state: HarnessState = { busy: null, purchaseStatus: null, entitlementCheck: null, products: [], productsMessage: null, offeringCheck: null, customer: null, log: [] };
   let nextLogId = 1;
   const listeners = new Set<(state: HarnessState) => void>();
 
@@ -264,6 +387,11 @@ export function createTestStoreHarness({
     for (const listener of listeners) listener(state);
   };
   const log = (message: string) => update({ log: [{ id: nextLogId++, message }, ...state.log].slice(0, LOG_LIMIT) });
+  /** Logs a refused or failed purchase and shows it next to the Buy buttons. */
+  const purchaseProblem = (message: string) => {
+    log(message);
+    update({ purchaseStatus: { tone: 'error', message } });
+  };
 
   /** Runs one action at a time, so a second tap can't start a second purchase. */
   async function run<T>(action: HarnessAction, body: () => Promise<T>): Promise<T | null> {
@@ -271,25 +399,34 @@ export function createTestStoreHarness({
     update({ busy: action });
     try {
       if (!(await sdk.isConfigured())) {
-        log(NOT_CONFIGURED);
+        if (action === 'purchasing') purchaseProblem(NOT_CONFIGURED);
+        else log(NOT_CONFIGURED);
         if (action === 'loadingProducts') update({ products: [], productsMessage: NOT_CONFIGURED, offeringCheck: null });
         return null;
       }
       return await body();
     } catch (error) {
-      log(`Unexpected error: ${errorDetail(error)}`);
+      const message = `Unexpected error: ${errorDetail(error)}`;
+      if (action === 'purchasing') purchaseProblem(message);
+      else log(message);
       return null;
     } finally {
       update({ busy: null });
     }
   }
 
-  async function updateCustomer() {
+  async function readCustomer(): Promise<CustomerSummary | null> {
     try {
-      update({ customer: summarizeCustomer(await sdk.getCustomerInfo(), entitlementId) });
+      return summarizeCustomer(await sdk.getCustomerInfo(), entitlementId);
     } catch (error) {
       log(`Couldn't read customer info: ${errorDetail(error)}`);
+      return null;
     }
+  }
+
+  async function updateCustomer() {
+    const customer = await readCustomer();
+    if (customer) update({ customer });
   }
 
   return {
@@ -303,15 +440,12 @@ export function createTestStoreHarness({
       await run('loadingProducts', async () => {
         try {
           const offerings = await sdk.getOfferings();
-          const products = productRows(offerings);
+          const offering = findOffering(offerings, expected.offeringId);
+          const products = offering ? productRows(offering, offerings.current?.identifier ?? null) : [];
           const offeringCheck = checkOffering(offerings, expected);
-          update({
-            products,
-            productsMessage: products.length ? null : 'RevenueCat returned no offerings with packages. Check the offering setup.',
-            offeringCheck,
-          });
-          log(`Loaded ${products.length} product${products.length === 1 ? '' : 's'}.`);
-          log(offeringCheck.ok ? 'Offering matches the app configuration.' : "Offering doesn't match the app configuration. See Setup check.");
+          update({ products, productsMessage: missingOfferingMessage(offerings, expected.offeringId), offeringCheck });
+          log(`Loaded ${products.length} product${products.length === 1 ? '' : 's'} from "${expected.offeringId}".`);
+          log(offeringCheck.ok ? `"${expected.offeringId}" matches its expected setup.` : `"${expected.offeringId}" doesn't match its expected setup. See Setup check.`);
         } catch (error) {
           const message = `Couldn't load products: ${errorDetail(error)}`;
           update({ products: [], productsMessage: message, offeringCheck: null });
@@ -323,32 +457,56 @@ export function createTestStoreHarness({
     purchase: (rowKey) =>
       run('purchasing', async () => {
         if (!usingTestStore) {
-          log('Purchases here only run with the RevenueCat Test Store key (EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY).');
+          purchaseProblem('Purchases here only run with the RevenueCat Test Store key (EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY).');
           return null;
         }
         const row = state.products.find((candidate) => candidate.key === rowKey);
         if (!row) {
-          log('That product is no longer listed. Reload products.');
+          purchaseProblem('That product is no longer listed. Reload products.');
           return null;
         }
+        update({
+          purchaseStatus: {
+            tone: 'progress',
+            message: `Purchasing ${row.productId}. Choose an option in RevenueCat's "Test Store Purchase" alert.`,
+          },
+          entitlementCheck: null,
+        });
+        const before = await readCustomer();
+        let result: MakePurchaseResult | undefined;
         let outcome: PurchaseOutcome;
         try {
-          const result = await sdk.purchasePackage(row.pkg);
-          outcome = { kind: 'purchased', productId: result.productIdentifier };
-          update({ customer: summarizeCustomer(result.customerInfo, entitlementId) });
-          await entitlements.refresh();
+          result = await sdk.purchasePackage(row.pkg);
+          outcome = purchasedOutcome(result);
         } catch (error) {
           outcome = purchaseErrorOutcome(error);
         }
         log(describeOutcome(outcome));
+        update({ purchaseStatus: { tone: OUTCOME_TONE[outcome.kind], message: describeOutcome(outcome) } });
+        if (outcome.kind !== 'purchased') {
+          const after = await readCustomer();
+          const entitlementCheck = checkEntitlementUnchanged(entitlementId, before, after);
+          update({ entitlementCheck, ...(after ? { customer: after } : {}) });
+          log(entitlementCheck.message);
+        } else if (result) {
+          // The purchase already succeeded: problems after this point are reported, never turned into a failed purchase.
+          try {
+            update({ customer: summarizeCustomer(result.customerInfo, entitlementId) });
+          } catch (error) {
+            log(`Purchase completed, but its customer info couldn't be read: ${errorDetail(error)}`);
+          }
+          try {
+            await entitlements.refresh();
+          } catch (error) {
+            log(`Purchase completed, but refreshing the subscription status failed: ${errorDetail(error)}`);
+          }
+        }
         return outcome;
       }),
 
     restore: async () => {
       await run('restoring', async () => {
-        const result = await entitlements.restorePurchases();
-        if (result.outcome === 'failed') log(`Restore failed (${result.error.kind}): ${result.error.message}`);
-        else log(result.outcome === 'restored' ? 'Restore found an active subscription.' : 'Restore completed: nothing to restore.');
+        log(describeRestore(await entitlements.restorePurchases()));
         await updateCustomer();
       });
     },

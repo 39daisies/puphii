@@ -3,16 +3,18 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View
 import { registerDevMenuItems } from 'expo-dev-client';
 import Purchases from 'react-native-purchases';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PLANS, REVENUECAT_ENTITLEMENT_ID, REVENUECAT_OFFERING_ID, SUBSCRIPTION_GATING_ENABLED } from '../subscription/config';
+import { REVENUECAT_ENTITLEMENT_ID, SUBSCRIPTION_GATING_ENABLED } from '../subscription/config';
 import { useEntitlement } from '../subscription/EntitlementProvider';
 import { KEY_MESSAGES } from '../subscription/revenueCat';
-import { appProductIds, appSdkKey, hasNativeStore } from '../subscription/revenueCatSdk';
+import { appSdkKey, hasNativeStore } from '../subscription/revenueCatSdk';
 import { colors, spacing } from '../theme';
-import { createTestStoreHarness, describeEntitlement, ExpectedOffering, HarnessState, TestStoreSdk } from './testStoreHarness';
+import { TEST_STORE_EXPECTED } from './testStoreConfig';
+import { createOpenRequests, createTestStoreHarness, describeEntitlement, HarnessState, TestStoreSdk } from './testStoreHarness';
 
 /**
  * Development builds only: App.tsx loads this file behind `__DEV__`, so production bundles
- * never contain it. Opened from the development menu, never from the app's own screens.
+ * never contain it. Opened from the development menu or the DEV ONLY button App.tsx places at
+ * the bottom of the You screen.
  */
 const testStoreSdk: TestStoreSdk = {
   isConfigured: () => Purchases.isConfigured(),
@@ -22,9 +24,12 @@ const testStoreSdk: TestStoreSdk = {
 };
 
 const MENU_ITEM = 'RevenueCat Test Store';
+const openRequests = createOpenRequests();
 
 export function TestStoreHarnessHost() {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => openRequests.subscribe(() => setOpen(true)), []);
 
   useEffect(() => {
     if (!hasNativeStore) return;
@@ -36,15 +41,20 @@ export function TestStoreHarnessHost() {
   return open ? <TestStoreScreen onClose={() => setOpen(false)} /> : null;
 }
 
-const usingTestStore = appSdkKey.ok && appSdkKey.source === 'testStore';
+/** Temporary shortcut for when the development menu can't be opened. */
+export function TestStoreHarnessButton() {
+  return (
+    <View style={styles.devEntry}>
+      <Text style={styles.devEntryLabel}>DEV ONLY · not in release builds</Text>
+      <HarnessButton label="Open RevenueCat Test Store" disabled={false} onPress={openRequests.request} />
+      {hasNativeStore ? null : (
+        <Text style={styles.muted}>This is Expo Go, which has no store connection. Open the Puphii development build instead.</Text>
+      )}
+    </View>
+  );
+}
 
-const expectedOffering: ExpectedOffering = {
-  offeringId: REVENUECAT_OFFERING_ID,
-  plans: {
-    annual: { ...PLANS.annual, productId: appProductIds.annual },
-    monthly: { ...PLANS.monthly, productId: appProductIds.monthly },
-  },
-};
+const usingTestStore = appSdkKey.ok && appSdkKey.source === 'testStore';
 
 function keyDescription(): string {
   if (!appSdkKey.ok) return `Key problem: ${KEY_MESSAGES[appSdkKey.reason]}`;
@@ -62,14 +72,22 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
         entitlementId: REVENUECAT_ENTITLEMENT_ID,
         entitlements: { refresh, restorePurchases },
         usingTestStore,
-        expected: expectedOffering,
+        expected: TEST_STORE_EXPECTED,
       }),
     [refresh, restorePurchases],
   );
   const [state, setState] = useState<HarnessState>(harness.current());
 
   useEffect(() => {
-    const unsubscribe = harness.subscribe(setState);
+    let lastLogged = 0;
+    const unsubscribe = harness.subscribe((next) => {
+      setState(next);
+      for (const entry of [...next.log].reverse()) {
+        if (entry.id <= lastLogged) continue;
+        lastLogged = entry.id;
+        console.log(`[Puphii] Test Store: ${entry.message}`);
+      }
+    });
     void harness.loadProducts();
     return unsubscribe;
   }, [harness]);
@@ -89,7 +107,7 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
 
         <ScrollView contentContainerStyle={styles.content}>
           <Section title="Subscription status (from RevenueCat)">
-            {describeEntitlement(entitlement).map((line) => (
+            {describeEntitlement(entitlement, { testStore: usingTestStore }).map((line) => (
               <Text key={line} style={styles.body}>
                 {line}
               </Text>
@@ -130,7 +148,9 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
                   {line}
                 </Text>
               ))}
-              <Text style={styles.muted}>Prices and trial lengths aren't checked: compare them with the RevenueCat dashboard.</Text>
+              <Text style={styles.muted}>
+                The trial shown is what the product offers. Whether this customer can still use it is reported in the subscription status above.
+              </Text>
             </Section>
           ) : null}
 
@@ -152,6 +172,27 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
                 <HarnessButton label="Buy" disabled={busy || !usingTestStore} onPress={() => void harness.purchase(row.key)} />
               </View>
             ))}
+            {state.purchaseStatus ? (
+              <View
+                accessibilityLiveRegion="polite"
+                style={[styles.purchaseStatus, state.purchaseStatus.tone === 'error' && styles.purchaseStatusError]}
+              >
+                {state.purchaseStatus.tone === 'progress' ? <ActivityIndicator color={colors.deepOcean} /> : null}
+                <Text style={[styles.body, styles.purchaseStatusText, state.purchaseStatus.tone === 'error' && styles.errorText]}>
+                  Purchase result: {state.purchaseStatus.message}
+                </Text>
+              </View>
+            ) : null}
+            {state.entitlementCheck ? (
+              <View
+                accessibilityLiveRegion="polite"
+                style={[styles.purchaseStatus, state.entitlementCheck.tone !== 'unchanged' && styles.purchaseStatusError]}
+              >
+                <Text style={[styles.body, styles.purchaseStatusText, state.entitlementCheck.tone !== 'unchanged' && styles.errorText]}>
+                  Subscription after this attempt: {state.entitlementCheck.message}
+                </Text>
+              </View>
+            ) : null}
           </Section>
 
           <View style={styles.actions}>
@@ -219,4 +260,28 @@ const styles = StyleSheet.create({
   buttonDimmed: { opacity: 0.5 },
   buttonLabel: { color: colors.white, fontWeight: '600', fontSize: 14 },
   spinner: { alignSelf: 'flex-start' },
+  purchaseStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surface,
+  },
+  purchaseStatusError: { borderColor: colors.danger },
+  purchaseStatusText: { flex: 1 },
+  errorText: { color: colors.danger, fontWeight: '600' },
+  devEntry: {
+    gap: spacing.xs,
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.borderStrong,
+    alignItems: 'flex-start',
+  },
+  devEntryLabel: { fontSize: 12, fontWeight: '700', color: colors.textMuted, letterSpacing: 0.5 },
 });

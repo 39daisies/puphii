@@ -12,8 +12,9 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { EntitlementProvider } from './src/subscription/EntitlementProvider';
 import { colors, fontAssets } from './src/theme';
 
+type DevToolsModule = { TestStoreHarnessHost: React.ComponentType; TestStoreHarnessButton: React.ComponentType };
 // Development-only tools. Metro drops this require from production bundles, where __DEV__ is false.
-const DevTools: React.ComponentType | null = __DEV__ ? require('./src/dev/TestStoreHarness').TestStoreHarnessHost : null;
+const DevTools: DevToolsModule | null = __DEV__ ? require('./src/dev/TestStoreHarness') : null;
 
 export default function App() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
@@ -33,7 +34,7 @@ export default function App() {
         <PuphiiProvider>
           <EntitlementProvider>
             <AppShell />
-            {DevTools ? <DevTools /> : null}
+            {DevTools ? <DevTools.TestStoreHarnessHost /> : null}
           </EntitlementProvider>
         </PuphiiProvider>
       )}
@@ -84,7 +85,7 @@ function AppShell() {
               />
             )}
             {tab === 'insights' && <InsightsScreen state={insights} onChange={updateInsights} />}
-            {tab === 'you' && <SettingsScreen />}
+            {tab === 'you' && <SettingsScreen footer={DevTools ? <DevTools.TestStoreHarnessButton /> : undefined} />}
           </>
         )}
       </View>

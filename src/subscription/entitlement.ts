@@ -10,7 +10,14 @@ export type Verification = { origin: EntitlementOrigin; verifiedAt: string };
 
 export type TrialEligibility = 'eligible' | 'ineligible' | 'unknown';
 
-export type VerificationErrorKind = 'network' | 'storeUnavailable' | 'verificationFailed' | 'notConfigured' | 'unknown';
+export type VerificationErrorKind =
+  | 'network'
+  | 'storeUnavailable'
+  | 'verificationFailed'
+  /** The store purchase belongs to a different RevenueCat customer. */
+  | 'receiptInUse'
+  | 'notConfigured'
+  | 'unknown';
 
 /** Null when the store reports a product that isn't one of the configured plans. Access doesn't depend on it. */
 export type ReportedPlan = PlanId | null;
@@ -77,6 +84,8 @@ export function accessFor(entitlement: Entitlement, { gatingEnabled, allowMock }
 
 export type RestoreResult =
   | { outcome: 'restored'; entitlement: Entitlement }
+  /** A subscription was found, but it gives no access now: it ended, or a renewal is failing. */
+  | { outcome: 'foundInactive'; entitlement: Entitlement }
   | { outcome: 'nothingToRestore'; entitlement: Entitlement }
   | { outcome: 'failed'; error: { kind: VerificationErrorKind; message: string } };
 

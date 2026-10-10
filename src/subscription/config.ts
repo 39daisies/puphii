@@ -11,12 +11,6 @@ export const SUBSCRIPTION_GATING_ENABLED = false;
 export const REVENUECAT_ENTITLEMENT_ID: string | null = 'puphii_pro';
 
 /**
- * The offering RevenueCat should report as current. The app reads `offerings.current`; this is
- * only compared against it by the development Test Store screen.
- */
-export const REVENUECAT_OFFERING_ID = 'default';
-
-/**
  * Prices, currencies and the trial's length are set in App Store Connect and Google Play
  * and must be shown from the store's product details, never from constants here.
  */
@@ -26,7 +20,7 @@ export type PlanConfig = {
    * Android: `subscriptionId:basePlanId`, as RevenueCat lists Google Play products.
    */
   productIds: { ios: string | null; android: string | null };
-  /** The package holding this plan in the current offering, the same for every store. */
+  /** The package holding this plan in an offering, the same for every store. */
   packageId: string;
   /** ISO 8601 billing period, used to check the store's products match the plan. */
   billingPeriod: 'P1Y' | 'P1M';
@@ -39,7 +33,7 @@ export const PLANS: Record<PlanId, PlanConfig> = {
 };
 
 /** RevenueCat Test Store products. Never mixed into the App Store or Google Play IDs above. */
-export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly', monthly: 'monthly' };
+export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly_2999', monthly: 'monthly_499' };
 
 /**
  * Each plan's product ID for the store the SDK key belongs to. A `testStore` key is only ever

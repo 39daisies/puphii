@@ -19,6 +19,7 @@ const purchasesSdk: PurchasesSdk = {
     configured = true;
   },
   getCustomerInfo: () => Purchases.getCustomerInfo(),
+  invalidateCustomerInfoCache: () => Purchases.invalidateCustomerInfoCache(),
   restorePurchases: () => Purchases.restorePurchases(),
   addCustomerInfoUpdateListener: (listener) => Purchases.addCustomerInfoUpdateListener(listener),
   removeCustomerInfoUpdateListener: (listener) => {
@@ -42,7 +43,7 @@ export const appSdkKey = selectSdkKey({
 });
 
 /** The product IDs that match the store `appSdkKey` connects to. */
-export const appProductIds = productIdsFor(
+const appProductIds = productIdsFor(
   appSdkKey.ok ? appSdkKey.source : 'platform',
   Platform.OS === 'android' ? 'android' : 'ios',
 );
@@ -53,6 +54,7 @@ export function createAppEntitlementService(): RevenueCatService {
     key: appSdkKey,
     entitlementId: REVENUECAT_ENTITLEMENT_ID,
     productIds: appProductIds,
+    log: __DEV__ ? (message) => console.log(`[Puphii] ${message}`) : undefined,
     appState: {
       current: () => AppState.currentState,
       subscribe(listener) {

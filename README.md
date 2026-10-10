@@ -40,8 +40,8 @@ The SDK only starts when all of these are set; until then the status is "not con
 
 - `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY` — the **public** SDK keys (`appl_…`, `goog_…`). Copy `.env.example` to `.env.local` (git-ignored) and restart `npx expo start`: a development build loads its JavaScript, keys included, from your local server. Builds that embed their JavaScript (later preview and store builds) need the same variables in the matching EAS environment, because `.env.local` is not uploaded. Secret keys (`sk_…`) are refused and must never be added. Test Store keys (`test_…`) are refused here; they have their own variable (see below).
 - `REVENUECAT_ENTITLEMENT_ID` in `src/subscription/config.ts` — `puphii_pro`, shared by every store including the Test Store.
-- Each plan's `productIds` in `src/subscription/config.ts` — `null` until the App Store / Google Play products exist. On Android, they take the form `subscriptionId:basePlanId`. Test Store products are listed separately in `TEST_STORE_PRODUCT_IDS` (`yearly`, `monthly`) and are only used while the Test Store key is in use, which only development builds allow.
-- The offering (`REVENUECAT_OFFERING_ID`, `default`) and each plan's `packageId` (`$rc_annual`, `$rc_monthly`) are the same for every store. The app reads RevenueCat's current offering; these values are only compared against it on the Test Store screen.
+- Each plan's `productIds` in `src/subscription/config.ts` — `null` until the App Store / Google Play products exist. On Android, they take the form `subscriptionId:basePlanId`. Test Store products are listed separately in `TEST_STORE_PRODUCT_IDS` (`yearly_2999`, `monthly_499`) and are only used while the Test Store key is in use, which only development builds allow.
+- Each plan's `packageId` (`$rc_annual`, `$rc_monthly`) is the same for every store and offering.
 
 Build and install (requires an Expo account; `eas build` links the project on first run, adding the EAS project ID to `app.json`):
 
@@ -64,12 +64,12 @@ The RevenueCat project (Puphii) is set up with these identifiers, which the app'
 
 1. **Test Store and key.** *Apps and providers → Test configuration*. Its API key (`test_…`, also listed under *Project settings → API keys*) goes in `.env.local` via `npm run set-test-store-key`, which reads it without echoing it, refuses secret keys and keeps other variables.
 2. **Entitlement** `puphii_pro`. Permanent; the real stores will use it too.
-3. **Test Store products** `yearly` (1 year, $29.99, 7-day free trial) and `monthly` (1 month, $4.99, no trial). Price and duration can't be edited after saving; create a new product instead.
+3. **Test Store products** `yearly_2999` (1 year, $29.99, 7-day free trial) and `monthly_499` (1 month, $4.99, no trial). Price and duration can't be edited after saving; create a new product instead. They replace the original `yearly` and `monthly`.
 4. **Both products attached** to `puphii_pro`.
-5. **Offering** `default`, current, with `$rc_annual` → `yearly` and `$rc_monthly` → `monthly`.
+5. **Offering** `default_v2`, with `$rc_annual` → `yearly_2999` and `$rc_monthly` → `monthly_499`. It is not the current offering (`default` stays current and unchanged); the Test Store screen loads it by identifier, set in `src/dev/testStoreConfig.ts`.
 6. **Sandbox access.** *Sandbox Testing Access* must let test purchases grant entitlements to anonymous users.
 
-The Test Store screen's **Setup check** compares what RevenueCat returns with this: the current offering, both packages, their product IDs and billing periods, and that only the annual plan has a free trial. Prices and trial length are shown for comparison with the dashboard but not judged.
+The Test Store screen lists only `default_v2`'s packages, and its **Setup check** compares them, as the SDK reports them, with this setup: both packages, their product IDs, billing periods, prices and currency, a free 7-day trial on the annual product and no introductory offer on the monthly one. If RevenueCat doesn't return `default_v2`, the screen says so and offers nothing to buy; it never falls back to the current offering. Whether a customer is still eligible for the trial is reported separately, in the subscription status. With the Test Store key, RevenueCat reports every product with a trial as eligible, even after the customer used it, so trial ineligibility can only be tested with sandbox store purchases.
 
 Then run it:
 
@@ -93,7 +93,7 @@ npm test                # unit tests for day keys, DST, series, undo, sanitising
 - `App.tsx` — font loading, store provider, tab shell.
 - `src/theme/` — colour, spacing, radius, shadow and typography tokens.
 - `src/data/` — puff log types, pure date/count logic, AsyncStorage persistence, serialized write queue and the `PuphiiStore` context. `persistence.ts` and `migrations.ts` version the stored data: add a migration instead of renaming a key, and keep fields you don't recognise.
-- `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). `revenueCat.ts` turns RevenueCat customer info into an entitlement and keeps it current (foreground refresh, update listener, offline handling); `revenueCatSdk.ts` is the only file that touches the native SDK; `EntitlementProvider` makes the status available to the app. The mock is for tests only.
+- `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). `revenueCat.ts` turns RevenueCat customer info into an entitlement and keeps it current (foreground refresh, update listener, a fresh check when the entitlement's expiry passes while the app is open, offline retries) and reports what a restore found; `revenueCatSdk.ts` is the only file that touches the native SDK; `EntitlementProvider` makes the status available to the app. The mock is for tests only.
 - `src/dev/` — development-only tools, loaded by `App.tsx` behind `__DEV__` and absent from release bundles: the RevenueCat Test Store screen (`TestStoreHarness.tsx`) and its logic (`testStoreHarness.ts`).
 - `scripts/set-test-store-key.mjs` — saves the RevenueCat Test Store public key to the git-ignored `.env.local` without echoing it.
 - `src/mascot/` — face registry, reaction-mode mapping and the animated `Mascot` component.

@@ -7,7 +7,6 @@ import {
   PLANS,
   productIdsFor,
   REVENUECAT_ENTITLEMENT_ID,
-  REVENUECAT_OFFERING_ID,
   SUBSCRIPTION_GATING_ENABLED,
   TEST_STORE_PRODUCT_IDS,
 } from '../src/subscription/config';
@@ -15,11 +14,20 @@ import { accessFor, Entitlement } from '../src/subscription/entitlement';
 import { createMockEntitlementService, mockEntitlements } from '../src/subscription/mockEntitlements';
 import {
   classifyError,
+  Clock,
   createRevenueCatService,
   entitlementFromCustomerInfo,
   ERROR_CODES,
+  errorDetail,
+  EXPIRY_RECHECK_DELAY_MS,
   INTRO_ELIGIBILITY,
+  NETWORK_RETRY_FIRST_MS,
+  NETWORK_RETRY_MAX_MS,
+  OVERDUE_RECHECK_INTERVAL_MS,
+  OVERDUE_RECHECK_LIMIT,
   PurchasesSdk,
+  redactKeys,
+  restoreOutcomeFor,
   RevenueCatOptions,
   trialEligibilityFrom,
   VERIFICATION_FAILED,
@@ -79,7 +87,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const storeError = (code: string) => Object.assign(new Error(`store error ${code}`), { code });
 
 function fakeSdk() {
-  const calls = { configure: [] as string[], getCustomerInfo: 0, restorePurchases: 0, eligibility: [] as string[][] };
+  const calls = { configure: [] as string[], getCustomerInfo: 0, invalidateCache: 0, restorePurchases: 0, eligibility: [] as string[][] };
   const listeners = new Set<(info: CustomerInfo) => void>();
   const sdk = {
     calls,
@@ -101,6 +109,10 @@ function fakeSdk() {
     getCustomerInfo() {
       calls.getCustomerInfo += 1;
       return sdk.nextCustomerInfo();
+    },
+    invalidateCustomerInfoCache() {
+      calls.invalidateCache += 1;
+      return Promise.resolve();
     },
     restorePurchases() {
       calls.restorePurchases += 1;
@@ -135,20 +147,58 @@ function fakeAppState(initial = 'active') {
   };
 }
 
+/** Timers that only run when a test advances time. Starts at RevenueCat's request time. */
+function fakeClock(start = Date.parse(REQUEST_DATE)) {
+  let now = start;
+  let nextId = 1;
+  const timers = new Map<number, { at: number; callback: () => void }>();
+  const clock: Clock = {
+    now: () => now,
+    setTimeout(callback, ms) {
+      const id = nextId++;
+      timers.set(id, { at: now + ms, callback });
+      return id;
+    },
+    clearTimeout: (id) => {
+      timers.delete(id as number);
+    },
+  };
+  return {
+    clock,
+    /** Delays of the pending timers, from now. */
+    pending: () => [...timers.values()].map((timer) => timer.at - now),
+    async advance(ms: number) {
+      now += ms;
+      for (;;) {
+        const due = [...timers.entries()].filter(([, timer]) => timer.at <= now).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        due[1].callback();
+        await settle();
+      }
+      await settle();
+    },
+  };
+}
+
 function setup(overrides: Partial<RevenueCatOptions> = {}) {
   const sdk = fakeSdk();
   const appState = fakeAppState();
+  const time = fakeClock();
+  const logs: string[] = [];
   const service = createRevenueCatService({
     sdk: sdk.api,
     key: IOS_KEY,
     entitlementId: ENTITLEMENT,
     productIds: PRODUCTS,
     appState: appState.source,
+    clock: time.clock,
+    log: (message) => logs.push(message),
     ...overrides,
   });
   const seen: Entitlement[] = [];
   service.subscribe((entitlement) => seen.push(entitlement));
-  return { sdk, appState, service, seen };
+  return { sdk, appState, service, seen, time, logs };
 }
 
 const ROOT = join(__dirname, '..', '..');
@@ -220,18 +270,18 @@ describe('RevenueCat SDK keys', () => {
 });
 
 describe('RevenueCat setup', () => {
-  test('the entitlement, offering and packages match the RevenueCat project', () => {
+  test('the entitlement and packages match the RevenueCat project', () => {
     assert.equal(REVENUECAT_ENTITLEMENT_ID, 'puphii_pro');
-    assert.equal(REVENUECAT_OFFERING_ID, 'default');
     assert.equal(PLANS.annual.packageId, '$rc_annual');
     assert.equal(PLANS.monthly.packageId, '$rc_monthly');
   });
 
   test('Test Store products are kept apart from the App Store and Google Play products', () => {
-    assert.deepEqual(TEST_STORE_PRODUCT_IDS, { annual: 'yearly', monthly: 'monthly' });
+    const testStore = { annual: 'yearly_2999', monthly: 'monthly_499' };
+    assert.deepEqual(TEST_STORE_PRODUCT_IDS, testStore);
     for (const plan of Object.values(PLANS)) assert.deepEqual(plan.productIds, { ios: null, android: null });
-    assert.deepEqual(productIdsFor('testStore', 'ios'), { annual: 'yearly', monthly: 'monthly' });
-    assert.deepEqual(productIdsFor('testStore', 'android'), { annual: 'yearly', monthly: 'monthly' });
+    assert.deepEqual(productIdsFor('testStore', 'ios'), testStore);
+    assert.deepEqual(productIdsFor('testStore', 'android'), testStore);
     assert.deepEqual(productIdsFor('platform', 'ios'), { annual: null, monthly: null });
     assert.deepEqual(productIdsFor('platform', 'android'), { annual: null, monthly: null });
   });
@@ -246,10 +296,15 @@ describe('RevenueCat setup', () => {
 
   test('a Test Store purchase of either product is reported as its plan', () => {
     const products = productIdsFor('testStore', 'ios');
-    const annual = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'yearly', periodType: 'TRIAL' })]), ENTITLEMENT, products);
-    const monthly = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'monthly' })]), ENTITLEMENT, products);
+    const annual = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'yearly_2999', periodType: 'TRIAL' })]), ENTITLEMENT, products);
+    const monthly = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'monthly_499' })]), ENTITLEMENT, products);
     assert.ok(annual.status === 'active' && annual.plan === 'annual' && annual.period === 'trial');
     assert.ok(monthly.status === 'active' && monthly.plan === 'monthly' && monthly.period === 'paid');
+  });
+
+  test('products from the original Test Store offering still unlock the entitlement but are no plan', () => {
+    const old = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'yearly' })]), ENTITLEMENT, productIdsFor('testStore', 'ios'));
+    assert.ok(old.status === 'active' && old.plan === null);
   });
 
   test('the SDK is never configured without a store module, a valid key and an entitlement ID', () => {
@@ -393,6 +448,8 @@ describe('RevenueCat errors', () => {
     assert.equal(classifyError(storeError(ERROR_CODES.INVALID_CREDENTIALS_ERROR)).kind, 'notConfigured');
     assert.equal(classifyError(storeError(ERROR_CODES.CONFIGURATION_ERROR)).kind, 'notConfigured');
     assert.equal(classifyError(storeError(ERROR_CODES.INVALID_RECEIPT_ERROR)).kind, 'verificationFailed');
+    assert.equal(classifyError(storeError(ERROR_CODES.RECEIPT_ALREADY_IN_USE_ERROR)).kind, 'receiptInUse');
+    assert.equal(classifyError(storeError(ERROR_CODES.RECEIPT_IN_USE_BY_OTHER_SUBSCRIBER_ERROR)).kind, 'receiptInUse');
     assert.equal(classifyError(storeError('999')).kind, 'unknown');
     assert.equal(classifyError(new Error('no code')).kind, 'unknown');
     assert.equal(classifyError(null).kind, 'unknown');
@@ -578,6 +635,275 @@ describe('RevenueCat entitlement service', () => {
     slow.resolve(customer());
     await refreshing;
     assert.equal(service.current().status, 'active');
+  });
+});
+
+const HOUR = 60 * 60 * 1000;
+const fromRequest = (ms: number) => new Date(Date.parse(REQUEST_DATE) + ms).toISOString();
+const networkError = () => Promise.reject(storeError(ERROR_CODES.NETWORK_ERROR));
+
+describe('Re-checking at expiry', () => {
+  test('asks RevenueCat again, bypassing its cache, once the entitlement expires while the app is open', async () => {
+    const { sdk, service, time } = setup();
+    sdk.nextCustomerInfo = () => Promise.resolve(customer([entry({ expirationDate: fromRequest(HOUR) })]));
+    service.start();
+    await settle();
+    assert.equal(service.current().status, 'active');
+    assert.deepEqual(time.pending(), [HOUR + EXPIRY_RECHECK_DELAY_MS]);
+
+    sdk.nextCustomerInfo = () => Promise.resolve(customer([entry({ isActive: false, expirationDate: fromRequest(HOUR) })]));
+    await time.advance(HOUR);
+    assert.equal(sdk.calls.getCustomerInfo, 1, 'not at the exact expiry, so a renewal has time to arrive');
+    await time.advance(EXPIRY_RECHECK_DELAY_MS);
+    assert.equal(sdk.calls.invalidateCache, 1);
+    assert.equal(sdk.calls.getCustomerInfo, 2);
+    const now = service.current();
+    assert.ok(now.status === 'inactive' && now.reason === 'expired');
+    assert.deepEqual(time.pending(), []);
+  });
+
+  test('a renewal moves the next check to the new expiry', async () => {
+    const { sdk, service, time } = setup();
+    sdk.nextCustomerInfo = () => Promise.resolve(customer([entry({ expirationDate: fromRequest(HOUR) })]));
+    service.start();
+    await settle();
+    sdk.nextCustomerInfo = () => Promise.resolve(customer([entry({ expirationDate: fromRequest(2 * HOUR) })]));
+    await time.advance(HOUR + EXPIRY_RECHECK_DELAY_MS);
+    const now = service.current();
+    assert.ok(now.status === 'active' && now.expiresAt === fromRequest(2 * HOUR));
+    assert.deepEqual(time.pending(), [HOUR]);
+  });
+
+  test('a grace period is re-checked when it ends', async () => {
+    const { sdk, service, time } = setup();
+    sdk.nextCustomerInfo = () =>
+      Promise.resolve(customer([entry({ billingIssueDetectedAt: REQUEST_DATE, willRenew: false, expirationDate: fromRequest(HOUR) })]));
+    service.start();
+    await settle();
+    assert.equal(service.current().status, 'gracePeriod');
+    assert.deepEqual(time.pending(), [HOUR + EXPIRY_RECHECK_DELAY_MS]);
+  });
+
+  test('lifetime access, no subscription and an ended subscription schedule no re-check', async () => {
+    for (const info of [customer([entry({ expirationDate: null })]), customer(), customer([entry({ isActive: false })])]) {
+      const { sdk, service, time } = setup();
+      sdk.nextCustomerInfo = () => Promise.resolve(info);
+      service.start();
+      await settle();
+      assert.deepEqual(time.pending(), []);
+    }
+  });
+
+  test('access still reported after its expiry is re-checked now, then every minute, a limited number of times', async () => {
+    const { sdk, service, time, logs } = setup();
+    sdk.nextCustomerInfo = () => Promise.resolve(customer([entry({ expirationDate: fromRequest(-HOUR) })]));
+    service.start();
+    await settle();
+    assert.deepEqual(time.pending(), [0]);
+    await time.advance(0);
+    for (let check = 2; check <= OVERDUE_RECHECK_LIMIT; check += 1) {
+      assert.deepEqual(time.pending(), [OVERDUE_RECHECK_INTERVAL_MS]);
+      await time.advance(OVERDUE_RECHECK_INTERVAL_MS);
+    }
+    assert.deepEqual(time.pending(), []);
+    assert.equal(sdk.calls.invalidateCache, OVERDUE_RECHECK_LIMIT);
+    assert.equal(service.current().status, 'active', "RevenueCat's answer is reported as given; the clock only decides when to ask");
+    assert.match(logs[logs.length - 1], /next check when the app returns to the foreground/);
+  });
+
+  test('returning to the foreground starts the overdue re-checks again', async () => {
+    const { sdk, service, time, appState } = setup();
+    sdk.nextCustomerInfo = () => Promise.resolve(customer([entry({ expirationDate: fromRequest(-HOUR) })]));
+    service.start();
+    await settle();
+    await time.advance(0);
+    for (let check = 2; check <= OVERDUE_RECHECK_LIMIT; check += 1) await time.advance(OVERDUE_RECHECK_INTERVAL_MS);
+    assert.deepEqual(time.pending(), []);
+    appState.change('background');
+    appState.change('active');
+    await settle();
+    assert.deepEqual(time.pending(), [0]);
+  });
+
+  test('a distant expiry is scheduled without overflowing the timer', async () => {
+    const { sdk, service, time } = setup();
+    sdk.nextCustomerInfo = () => Promise.resolve(customer([entry({ expirationDate: daysFromRequest(400) })]));
+    service.start();
+    await settle();
+    const [delay] = time.pending();
+    assert.ok(delay > 0 && delay <= 2_147_483_647, String(delay));
+  });
+
+  test('stopping cancels a pending re-check', async () => {
+    const { sdk, service, time } = setup();
+    sdk.nextCustomerInfo = () => Promise.resolve(customer([entry({ expirationDate: fromRequest(HOUR) })]));
+    service.start();
+    await settle();
+    service.stop();
+    assert.deepEqual(time.pending(), []);
+  });
+});
+
+describe('Offline retries', () => {
+  test('a first check that fails offline is retried with growing delays until RevenueCat answers', async () => {
+    const { sdk, service, time } = setup();
+    sdk.nextCustomerInfo = networkError;
+    service.start();
+    await settle();
+    assert.equal(service.current().status, 'error');
+    const delays: number[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      const [delay] = time.pending();
+      delays.push(delay);
+      await time.advance(delay);
+    }
+    const first = NETWORK_RETRY_FIRST_MS;
+    assert.deepEqual(delays, [first, 2 * first, 4 * first, 8 * first, NETWORK_RETRY_MAX_MS, NETWORK_RETRY_MAX_MS]);
+    assert.equal(sdk.calls.getCustomerInfo, 7);
+    assert.equal(sdk.calls.invalidateCache, 0, 'retries ask normally; only expiry checks bypass the cache');
+
+    sdk.nextCustomerInfo = () => Promise.resolve(customer());
+    await time.advance(time.pending()[0]);
+    assert.equal(service.current().status, 'inactive');
+    assert.deepEqual(time.pending(), []);
+  });
+
+  test('offline during a later check keeps the last answer, retries, then goes back to the expiry check', async () => {
+    const { sdk, service, time, appState } = setup();
+    const subscribed = () => Promise.resolve(customer([entry({ expirationDate: fromRequest(HOUR) })]));
+    sdk.nextCustomerInfo = subscribed;
+    service.start();
+    await settle();
+    sdk.nextCustomerInfo = networkError;
+    appState.change('background');
+    appState.change('active');
+    await settle();
+    assert.equal(service.current().status, 'active');
+    assert.deepEqual(time.pending(), [NETWORK_RETRY_FIRST_MS]);
+
+    sdk.nextCustomerInfo = subscribed;
+    await time.advance(NETWORK_RETRY_FIRST_MS);
+    assert.deepEqual(time.pending(), [HOUR + EXPIRY_RECHECK_DELAY_MS - NETWORK_RETRY_FIRST_MS]);
+  });
+
+  test('an answer from RevenueCat resets the retry delay', async () => {
+    const { sdk, service, time, appState } = setup();
+    sdk.nextCustomerInfo = networkError;
+    service.start();
+    await settle();
+    await time.advance(NETWORK_RETRY_FIRST_MS);
+    assert.deepEqual(time.pending(), [2 * NETWORK_RETRY_FIRST_MS]);
+    sdk.nextCustomerInfo = () => Promise.resolve(customer());
+    await time.advance(2 * NETWORK_RETRY_FIRST_MS);
+    sdk.nextCustomerInfo = networkError;
+    appState.change('background');
+    appState.change('active');
+    await settle();
+    assert.equal(service.current().status, 'inactive');
+    assert.deepEqual(time.pending(), [NETWORK_RETRY_FIRST_MS]);
+  });
+
+  test('problems a retry cannot fix are not retried', async () => {
+    for (const code of [ERROR_CODES.CONFIGURATION_ERROR, ERROR_CODES.INVALID_CREDENTIALS_ERROR, ERROR_CODES.INVALID_RECEIPT_ERROR]) {
+      const { sdk, service, time } = setup();
+      sdk.nextCustomerInfo = () => Promise.reject(storeError(code));
+      service.start();
+      await settle();
+      assert.equal(service.current().status, 'error');
+      assert.deepEqual(time.pending(), [], code);
+    }
+  });
+});
+
+describe('Restore outcomes', () => {
+  test('restore tells an ended or failing subscription apart from none at all', async () => {
+    const { sdk, service } = setup();
+    service.start();
+    await settle();
+    const cases: [CustomerInfo, string, string][] = [
+      [customer([entry({ isActive: false, expirationDate: daysFromRequest(-3) })]), 'foundInactive', 'inactive'],
+      [
+        customer([entry({ isActive: false, willRenew: false, billingIssueDetectedAt: daysFromRequest(-2), expirationDate: daysFromRequest(-1) })]),
+        'foundInactive',
+        'billingRetry',
+      ],
+      [customer(), 'nothingToRestore', 'inactive'],
+      [customer([entry({ billingIssueDetectedAt: REQUEST_DATE, willRenew: false })]), 'restored', 'gracePeriod'],
+      [customer([entry()]), 'restored', 'active'],
+    ];
+    for (const [info, outcome, status] of cases) {
+      sdk.nextRestore = () => Promise.resolve(info);
+      const result = await service.restorePurchases();
+      assert.equal(result.outcome, outcome, status);
+      assert.ok(result.outcome !== 'failed' && result.entitlement.status === status);
+      assert.equal(service.current().status, status);
+    }
+  });
+
+  test('a purchase linked to a different user is reported as such, not as a verification failure', async () => {
+    const { sdk, service } = setup();
+    service.start();
+    await settle();
+    for (const code of [ERROR_CODES.RECEIPT_ALREADY_IN_USE_ERROR, ERROR_CODES.RECEIPT_IN_USE_BY_OTHER_SUBSCRIBER_ERROR]) {
+      sdk.nextRestore = () => Promise.reject(storeError(code));
+      const result = await service.restorePurchases();
+      assert.ok(result.outcome === 'failed' && result.error.kind === 'receiptInUse', code);
+      assert.match(result.error.message, /linked to a different user/);
+    }
+    assert.equal(service.current().status, 'inactive', 'a failed restore keeps the last answer');
+  });
+
+  test('only access counts as restored', () => {
+    assert.equal(restoreOutcomeFor(mockEntitlements.active('annual')), 'restored');
+    assert.equal(restoreOutcomeFor(mockEntitlements.gracePeriod('annual')), 'restored');
+    assert.equal(restoreOutcomeFor(mockEntitlements.billingRetry('annual')), 'foundInactive');
+    assert.equal(restoreOutcomeFor(mockEntitlements.expired('annual')), 'foundInactive');
+    assert.equal(restoreOutcomeFor(mockEntitlements.trialEligible()), 'nothingToRestore');
+  });
+});
+
+describe('Diagnostics', () => {
+  test('failures are logged with RevenueCat’s codes, never with anything shaped like a key', async () => {
+    const { sdk, service, logs } = setup();
+    sdk.nextCustomerInfo = () =>
+      Promise.reject(
+        Object.assign(new Error('Invalid API key appl_TestOnlyKey123'), {
+          code: ERROR_CODES.INVALID_CREDENTIALS_ERROR,
+          readableErrorCode: 'INVALID_CREDENTIALS',
+          underlyingErrorMessage: 'key test_AbCdEf123456 rejected',
+        }),
+      );
+    service.start();
+    await settle();
+    assert.ok(logs.some((line) => /^Subscription check failed: code 11 · INVALID_CREDENTIALS · Invalid API key appl_… · key test_… rejected$/.test(line)));
+    assert.doesNotMatch(logs.join('\n'), /TestOnlyKey123|AbCdEf123456/);
+  });
+
+  test('configuration, restore and trial eligibility failures are logged too', async () => {
+    const configureFails = setup();
+    configureFails.sdk.configureError = storeError(ERROR_CODES.CONFIGURATION_ERROR);
+    configureFails.service.start();
+    assert.match(configureFails.logs.join('\n'), /RevenueCat configuration failed: code 23/);
+
+    const { sdk, service, logs } = setup();
+    sdk.nextEligibility = () => Promise.reject(storeError(ERROR_CODES.NETWORK_ERROR));
+    service.start();
+    await settle();
+    assert.match(logs.join('\n'), /Trial eligibility check failed, reported as unknown: code 10/);
+    sdk.nextRestore = () => Promise.reject(storeError(ERROR_CODES.STORE_PROBLEM_ERROR));
+    await service.restorePurchases();
+    assert.match(logs.join('\n'), /Restore failed: code 2/);
+  });
+
+  test('key-shaped text is masked, product identifiers are not', () => {
+    assert.equal(redactKeys('a appl_AbCdEf123 b goog_XyZ98765 c sk_ZZZZZZZZ d test_q1w2e3r4'), 'a appl_… b goog_… c sk_… d test_…');
+    assert.equal(redactKeys('yearly_2999 monthly_499 test.annual'), 'yearly_2999 monthly_499 test.annual');
+    assert.equal(errorDetail(null), classifyError(null).message);
+  });
+
+  test('the app logs diagnostics only in development builds', () => {
+    const adapter = readFileSync(join(ROOT, 'src', 'subscription', 'revenueCatSdk.ts'), 'utf8');
+    assert.match(adapter, /log: __DEV__ \? \(message\) => console\.log\(`\[Puphii\] \$\{message\}`\) : undefined,/);
   });
 });
 

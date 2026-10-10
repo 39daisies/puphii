@@ -32,7 +32,8 @@ const REMINDER_TIMES = [
 
 const timeLabel = (hour: number, minute: number) => formatTime(new Date(2026, 0, 1, hour, minute));
 
-export function SettingsScreen() {
+/** `footer` is only ever passed by development builds; release builds show the screen without it. */
+export function SettingsScreen({ footer }: { footer?: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const [page, setPage] = useState<Page>('main');
 
@@ -55,6 +56,7 @@ export function SettingsScreen() {
         {page === 'reminders' && <RemindersPage onBack={back} />}
         {page === 'data' && <DataPage onBack={back} />}
         {page === 'about' && <AboutPage onBack={back} />}
+        {page === 'main' && footer}
       </ScrollView>
     </View>
   );
