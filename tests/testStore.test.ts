@@ -12,18 +12,24 @@ import {
   describeRestore,
   EntitlementActions,
   findOffering,
+  harnessStoreFor,
+  HarnessStore,
   missingOfferingMessage,
+  NO_PURCHASES,
   productRows,
   PURCHASE_ERROR_CODES,
   purchaseErrorOutcome,
+  sandboxWarning,
   summarizeCustomer,
   TEST_STORE_TRIAL_NOTE,
   TestStoreSdk,
 } from '../src/dev/testStoreHarness';
+import { APP_STORE_EXPECTED, APP_STORE_OFFERING_ID } from '../src/dev/appStoreConfig';
 import { TEST_STORE_EXPECTED, TEST_STORE_OFFERING_ID } from '../src/dev/testStoreConfig';
 import { PLANS, SUBSCRIPTION_GATING_ENABLED, TEST_STORE_PRODUCT_IDS } from '../src/subscription/config';
 import { accessFor, Entitlement, RestoreResult } from '../src/subscription/entitlement';
 import { entitlementFromCustomerInfo } from '../src/subscription/revenueCat';
+import { selectSdkKey } from '../src/subscription/sdkKeys';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const rc = require('@revenuecat/purchases-typescript-internal');
@@ -101,7 +107,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fakes({ configured = true, usingTestStore = true } = {}) {
+function fakes({ configured = true, store = 'testStore' as HarnessStore, expected = EXPECTED } = {}) {
   const calls = { getOfferings: 0, purchase: [] as string[], getCustomerInfo: 0, refresh: 0, restore: 0 };
   const control = {
     offerings: (): Promise<PurchasesOfferings> => Promise.resolve(withV2([pkg('$rc_annual', 'teststore.annual', '$29.99', 'P1Y')])),
@@ -137,7 +143,7 @@ function fakes({ configured = true, usingTestStore = true } = {}) {
       return control.restore();
     },
   };
-  const harness = createTestStoreHarness({ sdk, entitlementId: ENTITLEMENT, entitlements, usingTestStore, expected: EXPECTED });
+  const harness = createTestStoreHarness({ sdk, entitlementId: ENTITLEMENT, entitlements, store, expected });
   return { harness, calls, control };
 }
 
@@ -515,13 +521,14 @@ describe('Test Store harness', () => {
     assert.equal(harness.current().busy, null);
   });
 
-  test('never buys through the App Store or Google Play, only the Test Store', async () => {
-    const { harness, calls } = fakes({ usingTestStore: false });
+  test('never buys without a Test Store or App Store key, such as with the Google Play key', async () => {
+    const { harness, calls } = fakes({ store: 'none' });
     await harness.loadProducts();
     assert.equal(harness.current().products.length, 1, 'products can still be inspected');
     assert.equal(await harness.purchase('default_v2/$rc_annual'), null);
     assert.deepEqual(calls.purchase, []);
-    assert.match(harness.current().log[0].message, /only run with the RevenueCat Test Store key/);
+    assert.equal(harness.current().log[0].message, NO_PURCHASES);
+    assert.match(NO_PURCHASES, /only run with the RevenueCat Test Store key .* or, on iOS, the App Store key/);
   });
 
   test('an unknown product key is refused', async () => {
@@ -569,7 +576,7 @@ describe('Test Store harness', () => {
     assert.equal(notConfigured.harness.current().purchaseStatus?.tone, 'error');
     assert.match(notConfigured.harness.current().purchaseStatus?.message ?? '', /not configured/);
 
-    const platformKey = fakes({ usingTestStore: false });
+    const platformKey = fakes({ store: 'none' });
     await platformKey.harness.loadProducts();
     await platformKey.harness.purchase('default_v2/$rc_annual');
     assert.equal(platformKey.harness.current().purchaseStatus?.tone, 'error');
@@ -792,5 +799,134 @@ describe('Simulated purchase failure', () => {
     await harness.purchase('default_v2/$rc_annual');
     assert.equal(harness.current().purchaseStatus?.tone, 'success');
     assert.equal(harness.current().entitlementCheck, null);
+  });
+});
+
+describe('App Store sandbox purchases in the development harness', () => {
+  /** default_v2 as RevenueCat returns it with the iOS key: the same packages, holding the App Store products. */
+  const appStoreV2 = (currencyCode = 'USD', annualIntro: object | null = WEEK_TRIAL) =>
+    withV2([
+      pkg('$rc_annual', 'puphii_annual_2999', currencyCode === 'USD' ? '$29.99' : '¥4,500', 'P1Y', annualIntro, currencyCode),
+      pkg('$rc_monthly', 'puphii_monthly_499', currencyCode === 'USD' ? '$4.99' : '¥750', 'P1M', null, currencyCode),
+    ]);
+  const appStoreEntry = (overrides: Partial<PurchasesEntitlementInfo> = {}) =>
+    testStoreEntry({ productIdentifier: 'puphii_annual_2999', store: 'APP_STORE', periodType: 'TRIAL', ...overrides });
+
+  test('the store comes from the validated SDK key: Test Store key, iOS App Store key, or nothing to buy with', () => {
+    const key = (platform: string, platformKey: string | undefined, testStoreKey?: string) =>
+      selectSdkKey({ platform, platformKey, testStoreKey, isDevelopmentBuild: true });
+    assert.equal(harnessStoreFor(key('ios', 'appl_abc123', 'test_abc123'), 'ios'), 'testStore', 'the Test Store key wins in development');
+    assert.equal(harnessStoreFor(key('ios', 'appl_abc123'), 'ios'), 'appStore');
+    assert.equal(harnessStoreFor(key('android', 'goog_abc123'), 'android'), 'none', 'Google Play is never bought from here');
+    assert.equal(harnessStoreFor(key('ios', undefined), 'ios'), 'none');
+    assert.equal(harnessStoreFor(key('ios', 'sk_abc123'), 'ios'), 'none', 'a secret key is refused before it gets here');
+    assert.equal(harnessStoreFor(key('ios', 'test_abc123'), 'ios'), 'none', 'a Test Store key in the App Store variable is refused');
+    assert.equal(harnessStoreFor({ ok: true, apiKey: 'goog_abc123', source: 'platform' }, 'ios'), 'none');
+  });
+
+  test('the App Store expectations use the App Store product IDs from config.ts and never the Test Store ones', () => {
+    assert.equal(APP_STORE_OFFERING_ID, 'default_v2');
+    assert.deepEqual(APP_STORE_EXPECTED.plans, {
+      annual: { packageId: '$rc_annual', productId: 'puphii_annual_2999', billingPeriod: 'P1Y', price: null, freeTrialDays: 7 },
+      monthly: { packageId: '$rc_monthly', productId: 'puphii_monthly_499', billingPeriod: 'P1M', price: null, freeTrialDays: null },
+    });
+    for (const plan of ['annual', 'monthly'] as const) {
+      assert.equal(APP_STORE_EXPECTED.plans[plan].productId, PLANS[plan].productIds.ios);
+      assert.equal(APP_STORE_EXPECTED.plans[plan].packageId, TEST_STORE_EXPECTED.plans[plan].packageId, 'one package per plan, shared by both stores');
+      assert.notEqual(APP_STORE_EXPECTED.plans[plan].productId, TEST_STORE_EXPECTED.plans[plan].productId);
+      assert.equal(TEST_STORE_EXPECTED.plans[plan].productId, TEST_STORE_PRODUCT_IDS[plan]);
+    }
+  });
+
+  test('the App Store products pass in any storefront currency; prices are shown, not judged', () => {
+    for (const currency of ['USD', 'JPY']) {
+      const check = checkOffering(appStoreV2(currency), APP_STORE_EXPECTED);
+      assert.equal(check.ok, true, check.lines.join('\n'));
+    }
+    assert.match(checkOffering(appStoreV2('JPY'), APP_STORE_EXPECTED).lines[1], /^OK annual: \$rc_annual → puphii_annual_2999, P1Y, ¥4,500 \(4500 JPY\), Free trial: 1 week$/);
+  });
+
+  test('the App Store trial and periods are still judged', () => {
+    assert.match(checkOffering(appStoreV2('USD', null), APP_STORE_EXPECTED).lines[1], /expected a 7-day free trial, found none/);
+    const swapped = checkOffering(
+      withV2([pkg('$rc_annual', 'puphii_monthly_499', '$4.99', 'P1M'), pkg('$rc_monthly', 'puphii_annual_2999', '$29.99', 'P1Y', WEEK_TRIAL)]),
+      APP_STORE_EXPECTED,
+    );
+    assert.match(swapped.lines[1], /^Mismatch annual: product is puphii_monthly_499, expected puphii_annual_2999; period is P1M, expected P1Y/);
+    assert.match(swapped.lines[2], /^Mismatch monthly: product is puphii_annual_2999, expected puphii_monthly_499; period is P1Y, expected P1M/);
+  });
+
+  test("each store's products fail the other store's check, so a mixed-up offering is caught", () => {
+    const testStoreProducts = checkOffering(planned(), APP_STORE_EXPECTED);
+    assert.equal(testStoreProducts.ok, false);
+    assert.match(testStoreProducts.lines[1], /product is yearly_2999, expected puphii_annual_2999/);
+    const appStoreProducts = checkOffering(appStoreV2(), TEST_STORE_EXPECTED);
+    assert.equal(appStoreProducts.ok, false);
+    assert.match(appStoreProducts.lines[1], /product is puphii_annual_2999, expected yearly_2999/);
+  });
+
+  test("a purchase goes through Apple's sheet, with the store's own prompt", async () => {
+    const { harness, calls, control } = fakes({ store: 'appStore', expected: APP_STORE_EXPECTED });
+    control.offerings = () => Promise.resolve(appStoreV2());
+    control.purchase = (p) => Promise.resolve({ productIdentifier: p.product.identifier, customerInfo: customer([appStoreEntry()]) } as MakePurchaseResult);
+    await harness.loadProducts();
+    assert.equal(harness.current().offeringCheck?.ok, true);
+    const pending = deferred<MakePurchaseResult>();
+    const original = control.purchase;
+    control.purchase = (p) => pending.promise.then(() => original(p));
+    const purchase = harness.purchase('default_v2/$rc_annual');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(harness.current().purchaseStatus?.message ?? '', /puphii_annual_2999.*Apple's purchase sheet.*sandbox Apple Account/);
+    assert.doesNotMatch(harness.current().purchaseStatus?.message ?? '', /Test Store/);
+    pending.resolve({} as MakePurchaseResult);
+    assert.deepEqual(await purchase, { kind: 'purchased', productId: 'puphii_annual_2999' });
+    assert.deepEqual(calls.purchase, ['puphii_annual_2999']);
+    assert.equal(calls.refresh, 1);
+    assert.equal(harness.current().customer?.entitlement?.store, 'APP_STORE');
+    assert.ok(!harness.current().log.some((entry) => /Warning/.test(entry.message)), 'a sandbox purchase raises no warning');
+  });
+
+  test('an App Store purchase RevenueCat does not mark as sandbox is flagged', async () => {
+    const { harness, control } = fakes({ store: 'appStore', expected: APP_STORE_EXPECTED });
+    control.offerings = () => Promise.resolve(appStoreV2());
+    control.purchase = (p) =>
+      Promise.resolve({ productIdentifier: p.product.identifier, customerInfo: customer([appStoreEntry({ isSandbox: false })]) } as MakePurchaseResult);
+    await harness.loadProducts();
+    await harness.purchase('default_v2/$rc_annual');
+    assert.equal(harness.current().purchaseStatus?.tone, 'success', 'the purchase result itself is reported as it happened');
+    assert.match(harness.current().log.map((entry) => entry.message).join('\n'), /Warning: RevenueCat did not mark this App Store purchase as sandbox/);
+  });
+
+  test('the sandbox warning is for App Store purchases only', () => {
+    const live = summarizeCustomer(customer([appStoreEntry({ isSandbox: false })]), ENTITLEMENT);
+    const sandbox = summarizeCustomer(customer([appStoreEntry()]), ENTITLEMENT);
+    assert.match(sandboxWarning('appStore', live) ?? '', /not mark this App Store purchase as sandbox/);
+    assert.equal(sandboxWarning('appStore', sandbox), null);
+    assert.equal(sandboxWarning('testStore', live), null);
+    assert.equal(sandboxWarning('appStore', summarizeCustomer(customer(), ENTITLEMENT)), null);
+  });
+
+  test('cancelling Apple\'s sheet changes nothing and is reported', async () => {
+    const { harness, calls, control } = fakes({ store: 'appStore', expected: APP_STORE_EXPECTED });
+    control.offerings = () => Promise.resolve(appStoreV2());
+    control.purchase = () => Promise.reject(storeError('1', { userCancelled: true }));
+    await harness.loadProducts();
+    assert.deepEqual(await harness.purchase('default_v2/$rc_annual'), { kind: 'cancelled' });
+    assert.equal(calls.refresh, 0);
+    assert.equal(harness.current().entitlementCheck?.tone, 'unchanged');
+  });
+
+  test('the screen picks the store and its expectations from the SDK key only', () => {
+    const screen = read(join(ROOT, 'src', 'dev', 'TestStoreHarness.tsx'));
+    assert.match(screen, /const store = harnessStoreFor\(appSdkKey, Platform\.OS\);/);
+    assert.match(screen, /const expected = store === 'appStore' \? APP_STORE_EXPECTED : TEST_STORE_EXPECTED;/);
+    assert.match(screen, /disabled=\{busy \|\| store === 'none'\}/);
+  });
+
+  test('the App Store expectations stay development-only', () => {
+    for (const file of APP_FILES) {
+      if (file.includes(join('src', 'dev'))) continue;
+      assert.ok(!/appStoreConfig|APP_STORE_EXPECTED/.test(read(file)), `${relative(ROOT, file)} uses the harness's App Store expectations`);
+    }
   });
 });

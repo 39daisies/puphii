@@ -1,11 +1,34 @@
 import type { CustomerInfo, MakePurchaseResult, PurchasesOffering, PurchasesOfferings, PurchasesPackage } from 'react-native-purchases';
 import { Entitlement, PlanId, RestoreResult } from '../subscription/entitlement';
 import { errorDetail } from '../subscription/revenueCat';
+import type { SdkKeyCheck } from '../subscription/sdkKeys';
 
 /**
- * Development-only harness for RevenueCat Test Store purchases. Nothing here is stored: the
- * subscription status always comes back from RevenueCat through the entitlement service.
+ * Development-only harness for RevenueCat Test Store purchases and, with the iOS key, App Store
+ * sandbox purchases. Nothing here is stored: the subscription status always comes back from
+ * RevenueCat through the entitlement service.
  */
+
+/**
+ * Where the harness buys. `appStore` is Apple's sandbox: the harness only exists in development
+ * builds, which are development- or ad hoc-signed, and those always buy in the sandbox.
+ * `none`: products can be inspected, nothing can be bought.
+ */
+export type HarnessStore = 'testStore' | 'appStore' | 'none';
+
+/** Chosen from the SDK key that already passed `selectSdkKey`, never from anything else. */
+export function harnessStoreFor(key: SdkKeyCheck, platform: string): HarnessStore {
+  if (!key.ok) return 'none';
+  if (key.source === 'testStore') return 'testStore';
+  return platform === 'ios' && key.apiKey.startsWith('appl_') ? 'appStore' : 'none';
+}
+
+export const STORE_LABEL: Record<HarnessStore, string> = {
+  testStore: 'Test Store',
+  appStore: 'App Store sandbox',
+  none: 'no purchases',
+};
+
 export interface TestStoreSdk {
   isConfigured(): Promise<boolean>;
   getOfferings(): Promise<PurchasesOfferings>;
@@ -87,7 +110,8 @@ export type ExpectedPlan = {
   packageId: string;
   productId: string;
   billingPeriod: string;
-  price: { amount: number; currencyCode: string };
+  /** Null when the price depends on the tester's storefront, as in App Store sandbox: shown but not judged. */
+  price: { amount: number; currencyCode: string } | null;
   /** Length of the free trial, or null when the product must have no introductory offer at all. */
   freeTrialDays: number | null;
 };
@@ -113,7 +137,7 @@ function checkPlan(plan: PlanId, want: ExpectedPlan, pkg: PurchasesPackage | und
   if (product.subscriptionPeriod !== want.billingPeriod) {
     problems.push(`period is ${product.subscriptionPeriod ?? 'none'}, expected ${want.billingPeriod}`);
   }
-  if (product.currencyCode !== want.price.currencyCode || !sameAmount(product.price, want.price.amount)) {
+  if (want.price && (product.currencyCode !== want.price.currencyCode || !sameAmount(product.price, want.price.amount))) {
     problems.push(`price is ${product.price} ${product.currencyCode}, expected ${want.price.amount} ${want.price.currencyCode}`);
   }
   const intro = describeIntro(pkg);
@@ -132,7 +156,7 @@ function checkPlan(plan: PlanId, want: ExpectedPlan, pkg: PurchasesPackage | und
 
 /**
  * Compares one offering, looked up by identifier, with what it is set up to contain: packages,
- * product IDs, billing periods, prices and the free trial, all as the SDK reports them. Whether
+ * product IDs, billing periods, prices (where fixed) and the free trial, all as the SDK reports them. Whether
  * a given customer is still eligible for the trial is a separate question RevenueCat answers.
  */
 export function checkOffering(offerings: PurchasesOfferings, expected: ExpectedOffering): OfferingCheck {
@@ -354,6 +378,19 @@ export type HarnessState = {
 
 const LOG_LIMIT = 12;
 const NOT_CONFIGURED = 'RevenueCat is not configured in this build. See the status above and the README.';
+export const NO_PURCHASES =
+  'Purchases here only run with the RevenueCat Test Store key (EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY) or, on iOS, the App Store key (EXPO_PUBLIC_REVENUECAT_IOS_API_KEY) for sandbox purchases.';
+
+const PURCHASE_PROMPT: Record<Exclude<HarnessStore, 'none'>, string> = {
+  testStore: 'Choose an option in RevenueCat\'s "Test Store Purchase" alert.',
+  appStore: "Confirm in Apple's purchase sheet, signed in with a sandbox Apple Account. It should be marked [Sandbox].",
+};
+
+/** Flags an App Store purchase RevenueCat didn't record as sandbox. Diagnostic only: it can't undo a purchase. */
+export function sandboxWarning(store: HarnessStore, customer: CustomerSummary): string | null {
+  if (store !== 'appStore' || !customer.entitlement || customer.entitlement.isSandbox) return null;
+  return 'Warning: RevenueCat did not mark this App Store purchase as sandbox. Development builds should only ever buy in the sandbox; check how this build was signed.';
+}
 
 export type TestStoreHarness = {
   current(): HarnessState;
@@ -368,14 +405,15 @@ export function createTestStoreHarness({
   sdk,
   entitlementId,
   entitlements,
-  usingTestStore,
+  store,
   expected,
 }: {
   sdk: TestStoreSdk;
   entitlementId: string | null;
   entitlements: EntitlementActions;
-  /** Purchases are only offered with the Test Store key, never through the App Store or Google Play. */
-  usingTestStore: boolean;
+  /** Purchases run through the Test Store or the App Store sandbox only, never Google Play. */
+  store: HarnessStore;
+  /** The setup check for `store`'s products: each store is judged by its own expectations. */
   expected: ExpectedOffering;
 }): TestStoreHarness {
   let state: HarnessState = { busy: null, purchaseStatus: null, entitlementCheck: null, products: [], productsMessage: null, offeringCheck: null, customer: null, log: [] };
@@ -456,8 +494,8 @@ export function createTestStoreHarness({
 
     purchase: (rowKey) =>
       run('purchasing', async () => {
-        if (!usingTestStore) {
-          purchaseProblem('Purchases here only run with the RevenueCat Test Store key (EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY).');
+        if (store === 'none') {
+          purchaseProblem(NO_PURCHASES);
           return null;
         }
         const row = state.products.find((candidate) => candidate.key === rowKey);
@@ -466,10 +504,7 @@ export function createTestStoreHarness({
           return null;
         }
         update({
-          purchaseStatus: {
-            tone: 'progress',
-            message: `Purchasing ${row.productId}. Choose an option in RevenueCat's "Test Store Purchase" alert.`,
-          },
+          purchaseStatus: { tone: 'progress', message: `Purchasing ${row.productId}. ${PURCHASE_PROMPT[store]}` },
           entitlementCheck: null,
         });
         const before = await readCustomer();
@@ -491,7 +526,10 @@ export function createTestStoreHarness({
         } else if (result) {
           // The purchase already succeeded: problems after this point are reported, never turned into a failed purchase.
           try {
-            update({ customer: summarizeCustomer(result.customerInfo, entitlementId) });
+            const customer = summarizeCustomer(result.customerInfo, entitlementId);
+            update({ customer });
+            const warning = sandboxWarning(store, customer);
+            if (warning) log(warning);
           } catch (error) {
             log(`Purchase completed, but its customer info couldn't be read: ${errorDetail(error)}`);
           }

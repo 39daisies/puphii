@@ -28,8 +28,8 @@ export type PlanConfig = {
 };
 
 export const PLANS: Record<PlanId, PlanConfig> = {
-  annual: { productIds: { ios: null, android: null }, packageId: '$rc_annual', billingPeriod: 'P1Y', hasFreeTrial: true },
-  monthly: { productIds: { ios: null, android: null }, packageId: '$rc_monthly', billingPeriod: 'P1M', hasFreeTrial: false },
+  annual: { productIds: { ios: 'puphii_annual_2999', android: null }, packageId: '$rc_annual', billingPeriod: 'P1Y', hasFreeTrial: true },
+  monthly: { productIds: { ios: 'puphii_monthly_499', android: null }, packageId: '$rc_monthly', billingPeriod: 'P1M', hasFreeTrial: false },
 };
 
 /** RevenueCat Test Store products. Never mixed into the App Store or Google Play IDs above. */

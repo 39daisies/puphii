@@ -7,3 +7,8 @@ web-build/
 .test-build/
 .env
 .env*.local
+# Apple signing and App Store Connect keys
+*.p8
+*.p12
+*.mobileprovision
+*.cer

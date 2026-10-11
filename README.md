@@ -38,9 +38,9 @@ Subscriptions use RevenueCat (`react-native-purchases`), which needs native code
 
 The SDK only starts when all of these are set; until then the status is "not configured" and no RevenueCat request is made:
 
-- `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY` — the **public** SDK keys (`appl_…`, `goog_…`). Copy `.env.example` to `.env.local` (git-ignored) and restart `npx expo start`: a development build loads its JavaScript, keys included, from your local server. Builds that embed their JavaScript (later preview and store builds) need the same variables in the matching EAS environment, because `.env.local` is not uploaded. Secret keys (`sk_…`) are refused and must never be added. Test Store keys (`test_…`) are refused here; they have their own variable (see below).
+- `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY` — the **public** SDK keys (`appl_…`, `goog_…`). Copy `.env.example` to `.env.local` (git-ignored) and restart `npx expo start`: a development build loads its JavaScript, keys included, from your local server. Builds that embed their JavaScript (the `preview` and `production` profiles) read them from the EAS environment of the same name, because `.env.local` is not uploaded (see *EAS environment variables* below). Secret keys (`sk_…`) are refused and must never be added. Test Store keys (`test_…`) are refused here; they have their own variable (see below).
 - `REVENUECAT_ENTITLEMENT_ID` in `src/subscription/config.ts` — `puphii_pro`, shared by every store including the Test Store.
-- Each plan's `productIds` in `src/subscription/config.ts` — `null` until the App Store / Google Play products exist. On Android, they take the form `subscriptionId:basePlanId`. Test Store products are listed separately in `TEST_STORE_PRODUCT_IDS` (`yearly_2999`, `monthly_499`) and are only used while the Test Store key is in use, which only development builds allow.
+- Each plan's `productIds` in `src/subscription/config.ts` — the App Store products `puphii_annual_2999` (1 year, 7-day free trial) and `puphii_monthly_499` (1 month), created in App Store Connect. Google Play IDs stay `null` until those products exist; on Android they take the form `subscriptionId:basePlanId`. Test Store products are listed separately in `TEST_STORE_PRODUCT_IDS` (`yearly_2999`, `monthly_499`) and are only used while the Test Store key is in use, which only development builds allow. Tests check the two sets never overlap or swap plans.
 - Each plan's `packageId` (`$rc_annual`, `$rc_monthly`) is the same for every store and offering.
 
 Build and install (requires an Expo account; `eas build` links the project on first run, adding the EAS project ID to `app.json`):
@@ -52,7 +52,18 @@ npx eas-cli build --profile development --platform android          # installabl
 npx expo start --dev-client                                         # then open the project from the installed build
 ```
 
-`eas.json` only adds development profiles; the bundle identifier and Android package stay `com.puphii.app`. Native `ios/` and `android/` folders are not committed: they are generated during the build.
+`eas.json` has the two development profiles above plus `preview` (internal distribution) and `production`; the bundle identifier and Android package stay `com.puphii.app`. Native `ios/` and `android/` folders are not committed: they are generated during the build.
+
+### EAS environment variables
+
+Each profile loads the EAS environment of its name (`development`, `preview`, `production`). `preview` and `production` builds embed their JavaScript, so they need the public iOS SDK key in their environment; `eas.json` itself holds no keys. Create it once per environment; the CLI prompts for the value:
+
+```bash
+npx eas-cli env:create --environment preview --name EXPO_PUBLIC_REVENUECAT_IOS_API_KEY --visibility sensitive
+npx eas-cli env:create --environment production --name EXPO_PUBLIC_REVENUECAT_IOS_API_KEY --visibility sensitive
+```
+
+Only the public `appl_…` key goes here. Never add the Test Store key to `preview` or `production` (release builds ignore it anyway), and never add a RevenueCat secret key (`sk_…`) or an App Store Connect private key (`.p8`) to any app variable: `EXPO_PUBLIC_` values are compiled into the app. Apple key and certificate files (`*.p8`, `*.p12`, `*.mobileprovision`, `*.cer`) are git-ignored.
 
 ### RevenueCat Test Store (development builds only)
 
@@ -79,7 +90,28 @@ npx eas-cli build --profile development-simulator --platform ios   # or --profil
 npx expo start --dev-client --clear
 ```
 
-Open the app in the development build, open the developer menu (shake the device, press `m` in the terminal, or `⌃⌘Z` in the iOS Simulator) and choose **RevenueCat Test Store**. The screen lists the products and prices RevenueCat returns, buys a package (try success, failure and cancel), restores, refreshes, and shows both the app's subscription status and the raw customer info. Buying is disabled unless the Test Store key is in use. Test subscriptions renew every 5 minutes (monthly) or every hour (annual), up to 5 times, then expire. Nothing is saved on the device, and no puff logs, settings or other app data are sent to RevenueCat. Expo Go can't make these purchases; use a development build.
+Open the app in the development build, open the developer menu (shake the device, press `m` in the terminal, or `⌃⌘Z` in the iOS Simulator) and choose **RevenueCat Test Store**. The screen lists the products and prices RevenueCat returns, buys a package (try success, failure and cancel), restores, refreshes, and shows both the app's subscription status and the raw customer info. Buying is disabled unless the Test Store key or, on iOS, the App Store key is in use (see below). Test subscriptions renew every 5 minutes (monthly) or every hour (annual), up to 5 times, then expire. Nothing is saved on the device, and no puff logs, settings or other app data are sent to RevenueCat. Expo Go can't make these purchases; use a development build.
+
+### App Store sandbox purchases (development builds only)
+
+With the public iOS key (`appl_…`) and no Test Store key, the same development screen buys the real App Store products through Apple's sandbox. Development builds are development- or ad hoc-signed, so StoreKit only ever charges a sandbox Apple Account, and nothing is billed. The screen is titled **RevenueCat · App Store sandbox**, loads `default_v2` by identifier (`src/dev/appStoreConfig.ts`) and checks its App Store products separately from the Test Store ones: product IDs, billing periods, a free 7-day trial on the annual product and no introductory offer on the monthly one. Prices are shown but not judged, because the sandbox shows them in the tester's storefront currency. If RevenueCat ever records a purchase from this screen as non-sandbox, the screen logs a warning. Purchases still start only from this screen; release builds don't contain it, and gating stays off.
+
+| Plan | App Store product | Test Store product | Package | Entitlement |
+|---|---|---|---|---|
+| Annual, 7-day free trial | `puphii_annual_2999` | `yearly_2999` | `$rc_annual` | `puphii_pro` |
+| Monthly | `puphii_monthly_499` | `monthly_499` | `$rc_monthly` | `puphii_pro` |
+
+Before it works, App Store Connect needs an active Paid Apps Agreement, both subscriptions in one subscription group with their metadata complete, the free 1-week introductory offer on the annual product, and a sandbox tester (*Users and Access → Sandbox*). RevenueCat needs an App Store app for `com.puphii.app` with an In-App Purchase key (`.p8`, uploaded to RevenueCat only), both App Store products attached to `puphii_pro`, and `default_v2`'s packages holding them alongside the Test Store products. If `default_v2` comes back without App Store products, the screen says so and offers nothing to buy.
+
+To test:
+
+1. In `.env.local`, set `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` to the iOS public key (*Project settings → API keys*) and empty `EXPO_PUBLIC_REVENUECAT_TEST_STORE_API_KEY`: in development builds the Test Store key takes precedence whenever it is set. Don't paste keys into chats, commits or terminal history.
+2. Install a development build on a physical iPhone (`npx eas-cli build --profile development --platform ios`, after registering it with `npx eas-cli device:create`), then run `npx expo start --dev-client --clear`. Sandbox purchases in the iOS Simulator have not been tested for this project.
+3. Sign in to the sandbox tester on the device when Apple's purchase sheet asks, or beforehand in the device's sandbox account setting (its location in Settings depends on the iOS version). Never use a personal Apple Account.
+4. Open the screen from **DEV ONLY → Open RevenueCat Test Store** on the You tab (or the developer menu), check that **Setup check** passes, then buy, cancel, restore and refresh. Apple's sheet should be marked as sandbox.
+5. Afterwards, restore the Test Store key in `.env.local` and restart Metro to go back to simulated purchases.
+
+Unlike the Test Store, the sandbox reports real trial eligibility: after a tester uses the free trial, the annual product reports it as ineligible until that tester's purchase history is cleared in App Store Connect. Sandbox renewals run on an accelerated schedule set per tester in App Store Connect.
 
 ## Checks
 
@@ -94,7 +126,7 @@ npm test                # unit tests for day keys, DST, series, undo, sanitising
 - `src/theme/` — colour, spacing, radius, shadow and typography tokens.
 - `src/data/` — puff log types, pure date/count logic, AsyncStorage persistence, serialized write queue and the `PuphiiStore` context. `persistence.ts` and `migrations.ts` version the stored data: add a migration instead of renaming a key, and keep fields you don't recognise.
 - `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). `revenueCat.ts` turns RevenueCat customer info into an entitlement and keeps it current (foreground refresh, update listener, a fresh check when the entitlement's expiry passes while the app is open, offline retries) and reports what a restore found; `revenueCatSdk.ts` is the only file that touches the native SDK; `EntitlementProvider` makes the status available to the app. The mock is for tests only.
-- `src/dev/` — development-only tools, loaded by `App.tsx` behind `__DEV__` and absent from release bundles: the RevenueCat Test Store screen (`TestStoreHarness.tsx`) and its logic (`testStoreHarness.ts`).
+- `src/dev/` — development-only tools, loaded by `App.tsx` behind `__DEV__` and absent from release bundles: the RevenueCat purchase screen (`TestStoreHarness.tsx`) and its logic (`testStoreHarness.ts`), with what each store's products should look like in `testStoreConfig.ts` (Test Store) and `appStoreConfig.ts` (App Store sandbox).
 - `scripts/set-test-store-key.mjs` — saves the RevenueCat Test Store public key to the git-ignored `.env.local` without echoing it.
 - `src/mascot/` — face registry, reaction-mode mapping and the animated `Mascot` component.
 - `src/components/` — shared UI (buttons, cards, tab bar, dialogs, chart, settings rows, number/text fields, option sheet, icons, backgrounds).

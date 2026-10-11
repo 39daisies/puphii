@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { registerDevMenuItems } from 'expo-dev-client';
 import Purchases from 'react-native-purchases';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,13 +8,23 @@ import { useEntitlement } from '../subscription/EntitlementProvider';
 import { KEY_MESSAGES } from '../subscription/revenueCat';
 import { appSdkKey, hasNativeStore } from '../subscription/revenueCatSdk';
 import { colors, spacing } from '../theme';
+import { APP_STORE_EXPECTED } from './appStoreConfig';
 import { TEST_STORE_EXPECTED } from './testStoreConfig';
-import { createOpenRequests, createTestStoreHarness, describeEntitlement, HarnessState, TestStoreSdk } from './testStoreHarness';
+import {
+  createOpenRequests,
+  createTestStoreHarness,
+  describeEntitlement,
+  harnessStoreFor,
+  HarnessState,
+  STORE_LABEL,
+  TestStoreSdk,
+} from './testStoreHarness';
 
 /**
  * Development builds only: App.tsx loads this file behind `__DEV__`, so production bundles
  * never contain it. Opened from the development menu or the DEV ONLY button App.tsx places at
- * the bottom of the You screen.
+ * the bottom of the You screen. Buys through the Test Store with the Test Store key, or through
+ * the App Store sandbox with the iOS key.
  */
 const testStoreSdk: TestStoreSdk = {
   isConfigured: () => Purchases.isConfigured(),
@@ -54,14 +64,27 @@ export function TestStoreHarnessButton() {
   );
 }
 
-const usingTestStore = appSdkKey.ok && appSdkKey.source === 'testStore';
+const store = harnessStoreFor(appSdkKey, Platform.OS);
+const usingTestStore = store === 'testStore';
+const expected = store === 'appStore' ? APP_STORE_EXPECTED : TEST_STORE_EXPECTED;
 
 function keyDescription(): string {
   if (!appSdkKey.ok) return `Key problem: ${KEY_MESSAGES[appSdkKey.reason]}`;
-  return appSdkKey.source === 'testStore'
-    ? 'Key: RevenueCat Test Store (simulated purchases)'
-    : 'Key: App Store / Google Play. Buying is disabled here; set the Test Store key to simulate purchases.';
+  switch (store) {
+    case 'testStore':
+      return 'Key: RevenueCat Test Store (simulated purchases)';
+    case 'appStore':
+      return 'Key: App Store. Purchases use Apple’s sandbox; sign in with a sandbox Apple Account when asked. The Test Store key is not set.';
+    case 'none':
+      return 'Key: Google Play. Buying is disabled here; set the Test Store key to simulate purchases.';
+  }
 }
+
+const SCREEN_NOTE: Record<typeof store, string> = {
+  testStore: 'Development builds only. Purchases here are simulated and never charged.',
+  appStore: 'Development builds only. Purchases go through the App Store sandbox and are never charged.',
+  none: 'Development builds only. Products can be inspected; nothing can be bought with this key.',
+};
 
 function TestStoreScreen({ onClose }: { onClose: () => void }) {
   const { entitlement, access, refresh, restorePurchases } = useEntitlement();
@@ -71,8 +94,8 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
         sdk: testStoreSdk,
         entitlementId: REVENUECAT_ENTITLEMENT_ID,
         entitlements: { refresh, restorePurchases },
-        usingTestStore,
-        expected: TEST_STORE_EXPECTED,
+        store,
+        expected,
       }),
     [refresh, restorePurchases],
   );
@@ -85,7 +108,7 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
       for (const entry of [...next.log].reverse()) {
         if (entry.id <= lastLogged) continue;
         lastLogged = entry.id;
-        console.log(`[Puphii] Test Store: ${entry.message}`);
+        console.log(`[Puphii] ${STORE_LABEL[store]}: ${entry.message}`);
       }
     });
     void harness.loadProducts();
@@ -98,12 +121,12 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <View style={styles.header}>
-          <Text style={styles.title}>RevenueCat Test Store</Text>
+          <Text style={styles.title}>{store === 'appStore' ? 'RevenueCat · App Store sandbox' : 'RevenueCat Test Store'}</Text>
           <Pressable accessibilityRole="button" onPress={onClose} hitSlop={12}>
             <Text style={styles.link}>Close</Text>
           </Pressable>
         </View>
-        <Text style={styles.note}>Development builds only. Purchases here are simulated and never charged.</Text>
+        <Text style={styles.note}>{SCREEN_NOTE[store]}</Text>
 
         <ScrollView contentContainerStyle={styles.content}>
           <Section title="Subscription status (from RevenueCat)">
@@ -169,7 +192,7 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
                   </Text>
                   {row.introOffer ? <Text style={styles.muted}>{row.introOffer}</Text> : null}
                 </View>
-                <HarnessButton label="Buy" disabled={busy || !usingTestStore} onPress={() => void harness.purchase(row.key)} />
+                <HarnessButton label="Buy" disabled={busy || store === 'none'} onPress={() => void harness.purchase(row.key)} />
               </View>
             ))}
             {state.purchaseStatus ? (

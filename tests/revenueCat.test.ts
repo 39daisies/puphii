@@ -41,6 +41,9 @@ const rc = require('@revenuecat/purchases-typescript-internal');
 /** Test-only identifiers, deliberately different from the app's real ones. */
 const ENTITLEMENT = 'test-entitlement';
 const PRODUCTS = { annual: 'test.annual', monthly: 'test.monthly' };
+/** The real product IDs, written out so a change to config.ts has to be deliberate. */
+const APP_STORE = { annual: 'puphii_annual_2999', monthly: 'puphii_monthly_499' };
+const TEST_STORE = { annual: 'yearly_2999', monthly: 'monthly_499' };
 const IOS_KEY: SdkKeyCheck = { ok: true, apiKey: 'appl_TestOnlyKey123', source: 'platform' };
 type Verified = PurchasesEntitlementInfo['verification'];
 const REQUEST_DATE = '2026-10-10T12:00:00.000Z';
@@ -276,14 +279,17 @@ describe('RevenueCat setup', () => {
     assert.equal(PLANS.monthly.packageId, '$rc_monthly');
   });
 
-  test('Test Store products are kept apart from the App Store and Google Play products', () => {
-    const testStore = { annual: 'yearly_2999', monthly: 'monthly_499' };
-    assert.deepEqual(TEST_STORE_PRODUCT_IDS, testStore);
-    for (const plan of Object.values(PLANS)) assert.deepEqual(plan.productIds, { ios: null, android: null });
-    assert.deepEqual(productIdsFor('testStore', 'ios'), testStore);
-    assert.deepEqual(productIdsFor('testStore', 'android'), testStore);
-    assert.deepEqual(productIdsFor('platform', 'ios'), { annual: null, monthly: null });
+  test('the App Store products match App Store Connect; Google Play has none yet', () => {
+    assert.deepEqual(PLANS.annual.productIds, { ios: 'puphii_annual_2999', android: null });
+    assert.deepEqual(PLANS.monthly.productIds, { ios: 'puphii_monthly_499', android: null });
+    assert.deepEqual(productIdsFor('platform', 'ios'), APP_STORE);
     assert.deepEqual(productIdsFor('platform', 'android'), { annual: null, monthly: null });
+  });
+
+  test('Test Store products are kept apart from the App Store and Google Play products', () => {
+    assert.deepEqual(TEST_STORE_PRODUCT_IDS, TEST_STORE);
+    assert.deepEqual(productIdsFor('testStore', 'ios'), TEST_STORE);
+    assert.deepEqual(productIdsFor('testStore', 'android'), TEST_STORE);
   });
 
   test('outside development builds the Test Store key, and so its product IDs, are never selected', () => {
@@ -292,6 +298,9 @@ describe('RevenueCat setup', () => {
     const release = selectSdkKey({ platform: 'android', platformKey: 'goog_abc123', testStoreKey: 'test_abc123', isDevelopmentBuild: false });
     assert.ok(release.ok && release.source === 'platform');
     assert.deepEqual(productIdsFor(release.source, 'android'), { annual: null, monthly: null });
+    const iosRelease = selectSdkKey({ platform: 'ios', platformKey: 'appl_abc123', testStoreKey: 'test_abc123', isDevelopmentBuild: false });
+    assert.ok(iosRelease.ok && iosRelease.source === 'platform');
+    assert.deepEqual(productIdsFor(iosRelease.source, 'ios'), APP_STORE);
   });
 
   test('a Test Store purchase of either product is reported as its plan', () => {
@@ -305,6 +314,70 @@ describe('RevenueCat setup', () => {
   test('products from the original Test Store offering still unlock the entitlement but are no plan', () => {
     const old = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'yearly' })]), ENTITLEMENT, productIdsFor('testStore', 'ios'));
     assert.ok(old.status === 'active' && old.plan === null);
+  });
+});
+
+describe('App Store and Test Store products are never mixed', () => {
+  const ids = (products: Record<string, string | null>) => Object.values(products).filter((id): id is string => id !== null);
+
+  test('no product ID belongs to both stores, and each store has one per plan', () => {
+    const apple = ids(productIdsFor('platform', 'ios'));
+    const testStore = ids(productIdsFor('testStore', 'ios'));
+    assert.equal(new Set(apple).size, 2);
+    assert.equal(new Set(testStore).size, 2);
+    for (const id of apple) assert.ok(!testStore.includes(id), `${id} is in both stores`);
+    for (const id of apple) assert.match(id, /^puphii_/, 'App Store IDs carry the app prefix');
+    for (const id of testStore) assert.doesNotMatch(id, /^puphii_/, 'Test Store IDs never carry it');
+  });
+
+  test('each plan keeps its period in both stores: annual is never mapped to a monthly product', () => {
+    for (const source of ['platform', 'testStore'] as const) {
+      const products = productIdsFor(source, 'ios');
+      assert.match(products.annual ?? '', /annual|yearly/, source);
+      assert.match(products.monthly ?? '', /monthly/, source);
+    }
+    assert.match(PLANS.annual.productIds.ios ?? '', /2999$/);
+    assert.match(PLANS.monthly.productIds.ios ?? '', /499$/);
+  });
+
+  test('with the App Store key, App Store purchases are their plan and Test Store products are none', () => {
+    const apple = productIdsFor('platform', 'ios');
+    const annual = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'puphii_annual_2999', periodType: 'TRIAL' })]), ENTITLEMENT, apple);
+    const monthly = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'puphii_monthly_499' })]), ENTITLEMENT, apple);
+    assert.ok(annual.status === 'active' && annual.plan === 'annual' && annual.period === 'trial');
+    assert.ok(monthly.status === 'active' && monthly.plan === 'monthly');
+    for (const id of ids(TEST_STORE)) {
+      const state = entitlementFromCustomerInfo(customer([entry({ productIdentifier: id })]), ENTITLEMENT, apple);
+      assert.ok(state.status === 'active' && state.plan === null, id);
+    }
+  });
+
+  test('with the Test Store key, App Store products are no plan', () => {
+    for (const id of ids(APP_STORE)) {
+      const state = entitlementFromCustomerInfo(customer([entry({ productIdentifier: id })]), ENTITLEMENT, productIdsFor('testStore', 'ios'));
+      assert.ok(state.status === 'active' && state.plan === null, id);
+    }
+  });
+
+  test('the trial eligibility check asks about the App Store annual product with the App Store key', async () => {
+    const { sdk, service } = setup({ productIds: productIdsFor('platform', 'ios') });
+    sdk.nextEligibility = (requested) =>
+      Promise.resolve(Object.fromEntries(requested.map((id) => [id, { status: id === 'puphii_annual_2999' ? INTRO_ELIGIBILITY.ELIGIBLE : INTRO_ELIGIBILITY.UNKNOWN }])));
+    service.start();
+    await settle();
+    assert.deepEqual(sdk.calls.eligibility, [['puphii_annual_2999']]);
+    const state = service.current();
+    assert.ok(state.status === 'inactive' && state.annualTrial === 'eligible');
+  });
+
+  test('product IDs are written only in config.ts; everything else reads them from there', () => {
+    const files = sourceFiles(join(ROOT, 'src')).concat(join(ROOT, 'App.tsx'));
+    for (const id of [...ids(APP_STORE), ...ids(TEST_STORE)]) {
+      for (const file of files) {
+        if (file.endsWith(join('subscription', 'config.ts'))) continue;
+        assert.ok(!readFileSync(file, 'utf8').includes(`'${id}'`), `${file} hardcodes ${id}`);
+      }
+    }
   });
 
   test('the SDK is never configured without a store module, a valid key and an entitlement ID', () => {
@@ -356,6 +429,36 @@ describe('RevenueCat setup', () => {
     assert.ok(adapter.includes('process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY'));
     assert.ok(adapter.includes('process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY'));
     assert.ok(/\.env\b/.test(readFileSync(join(ROOT, '.gitignore'), 'utf8')), '.env files are git-ignored');
+  });
+
+  test('Apple signing and App Store Connect key files are git-ignored', () => {
+    const ignored = readFileSync(join(ROOT, '.gitignore'), 'utf8').split('\n').map((line) => line.trim());
+    for (const pattern of ['.env*.local', '*.p8', '*.p12', '*.mobileprovision', '*.cer']) assert.ok(ignored.includes(pattern), pattern);
+  });
+});
+
+describe('EAS build profiles', () => {
+  type Profile = { developmentClient?: boolean; distribution?: string; environment?: string; env?: Record<string, string>; extends?: string };
+  const eas = JSON.parse(readFileSync(join(ROOT, 'eas.json'), 'utf8')) as { build: Record<string, Profile> };
+
+  test('preview and production builds take their variables from the matching EAS environment', () => {
+    assert.deepEqual(eas.build.preview, { distribution: 'internal', environment: 'preview' });
+    assert.deepEqual(eas.build.production, { environment: 'production' });
+    assert.equal(eas.build.development.environment, 'development');
+  });
+
+  test('only development profiles build the development client', () => {
+    for (const name of ['preview', 'production']) {
+      assert.ok(!eas.build[name].developmentClient, name);
+      assert.equal(eas.build[name].extends, undefined, `${name} must not inherit the development client`);
+    }
+  });
+
+  test('eas.json holds no API keys and never sets the Test Store key', () => {
+    const text = readFileSync(join(ROOT, 'eas.json'), 'utf8');
+    assert.doesNotMatch(text, /\b(appl|goog|amzn|test|sk)_[A-Za-z0-9]{6,}/);
+    assert.doesNotMatch(text, /EXPO_PUBLIC_REVENUECAT_/);
+    for (const profile of Object.values(eas.build)) assert.equal(profile.env, undefined);
   });
 });
 
