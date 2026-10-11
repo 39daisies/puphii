@@ -94,7 +94,7 @@ Open the app in the development build, open the developer menu (shake the device
 
 ### App Store sandbox purchases (development builds only)
 
-With the public iOS key (`appl_…`) and no Test Store key, the same development screen buys the real App Store products through Apple's sandbox. Development builds are development- or ad hoc-signed, so StoreKit only ever charges a sandbox Apple Account, and nothing is billed. The screen is titled **RevenueCat · App Store sandbox**, loads `default_v2` by identifier (`src/dev/appStoreConfig.ts`) and checks its App Store products separately from the Test Store ones: product IDs, billing periods, a free 7-day trial on the annual product and no introductory offer on the monthly one. Prices are shown but not judged, because the sandbox shows them in the tester's storefront currency. If RevenueCat ever records a purchase from this screen as non-sandbox, the screen logs a warning. Purchases still start only from this screen; release builds don't contain it, and gating stays off.
+With the public iOS key (`appl_…`) and no Test Store key, the same development screen buys the real App Store products through Apple's sandbox. Development builds are development- or ad hoc-signed, so StoreKit only ever charges a sandbox Apple Account, and nothing is billed. The screen is titled **RevenueCat · App Store sandbox**, loads `default_v2` by identifier (`src/dev/appStoreConfig.ts`) and checks its App Store products separately from the Test Store ones: product IDs, billing periods, a free 7-day trial on the annual product and no introductory offer on the monthly one. Prices are shown but not judged, because the sandbox shows them in the tester's storefront currency. If RevenueCat ever records a purchase from this screen as non-sandbox, the screen logs a warning. Release builds don't contain this screen, and gating stays off. The only other place purchases start is the Puphii Pro paywall (below).
 
 | Plan | App Store product | Test Store product | Package | Entitlement |
 |---|---|---|---|---|
@@ -113,6 +113,17 @@ To test:
 
 Unlike the Test Store, the sandbox reports real trial eligibility: after a tester uses the free trial, the annual product reports it as ineligible until that tester's purchase history is cleared in App Store Connect. Sandbox renewals run on an accelerated schedule set per tester in App Store Connect.
 
+### Puphii Pro paywall
+
+**You → App Settings → Puphii Pro** opens the customer-facing paywall (`src/screens/PaywallScreen.tsx`, logic in `src/subscription/paywall.ts`). It is never shown on launch and, with gating off, locks nothing.
+
+- **Products:** it uses RevenueCat's current offering when its `$rc_annual` and `$rc_monthly` packages hold this store's configured products, otherwise `default_v2` (`PAYWALL_OFFERING_ID`). A package is only offered when its product ID and billing period match `config.ts`, so App Store and Test Store products are never mixed. With the Test Store key, a development build's paywall shows the Test Store products.
+- **Prices and trial:** every price is StoreKit's localized string as reported by RevenueCat (`priceString`, `pricePerMonthString`). The free trial is only mentioned when the product has a free introductory offer **and** `checkTrialOrIntroductoryPriceEligibility` reports the customer eligible; its length comes from the offer. When eligibility can't be checked, no trial is claimed.
+- **Access:** only an active (or grace-period) `puphii_pro` entitlement counts as subscribed. A purchase is reported as successful only when the returned customer info has it; the entitlement service is then refreshed. Cancellation, pending approval, network and store errors grant nothing. Purchase and restore can't run twice at once.
+- **Release configuration:** the Terms of Use and Privacy Policy URLs (`LEGAL_URLS`) and the list of Pro benefits (`PRO_BENEFITS`) in `src/subscription/config.ts` are unset. Release builds hide the Puphii Pro row until all three are set; development builds always show it, with a **Before release** list of what is missing. Use `https://` links only.
+
+To try it in a development build, open the You tab and tap **Puphii Pro**. With the Test Store key, purchases are simulated; with the iOS key, they go through Apple's sandbox as described above.
+
 ## Checks
 
 ```bash
@@ -125,7 +136,7 @@ npm test                # unit tests for day keys, DST, series, undo, sanitising
 - `App.tsx` — font loading, store provider, tab shell.
 - `src/theme/` — colour, spacing, radius, shadow and typography tokens.
 - `src/data/` — puff log types, pure date/count logic, AsyncStorage persistence, serialized write queue and the `PuphiiStore` context. `persistence.ts` and `migrations.ts` version the stored data: add a migration instead of renaming a key, and keep fields you don't recognise.
-- `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). `revenueCat.ts` turns RevenueCat customer info into an entitlement and keeps it current (foreground refresh, update listener, a fresh check when the entitlement's expiry passes while the app is open, offline retries) and reports what a restore found; `revenueCatSdk.ts` is the only file that touches the native SDK; `EntitlementProvider` makes the status available to the app. The mock is for tests only.
+- `src/subscription/` — subscription entitlement types, access rules and plan configuration (gating is off). `revenueCat.ts` turns RevenueCat customer info into an entitlement and keeps it current (foreground refresh, update listener, a fresh check when the entitlement's expiry passes while the app is open, offline retries) and reports what a restore found; `revenueCatSdk.ts` is the only file that touches the native SDK; `EntitlementProvider` makes the status available to the app; `paywall.ts` picks and describes the Puphii Pro plans and runs purchases and restores for `src/screens/PaywallScreen.tsx`. The mock is for tests only.
 - `src/dev/` — development-only tools, loaded by `App.tsx` behind `__DEV__` and absent from release bundles: the RevenueCat purchase screen (`TestStoreHarness.tsx`) and its logic (`testStoreHarness.ts`), with what each store's products should look like in `testStoreConfig.ts` (Test Store) and `appStoreConfig.ts` (App Store sandbox).
 - `scripts/set-test-store-key.mjs` — saves the RevenueCat Test Store public key to the git-ignored `.env.local` without echoing it.
 - `src/mascot/` — face registry, reaction-mode mapping and the animated `Mascot` component.

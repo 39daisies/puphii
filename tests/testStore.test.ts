@@ -171,11 +171,11 @@ describe('Test Store harness isolation', () => {
   test('the DEV ONLY shortcut reaches the You screen only through the __DEV__ require', () => {
     const app = read(join(ROOT, 'App.tsx'));
     assert.match(app, /const DevTools: DevToolsModule \| null = __DEV__ \? require\('\.\/src\/dev\/TestStoreHarness'\) : null;/);
-    assert.match(app, /<SettingsScreen footer=\{DevTools \? <DevTools\.TestStoreHarnessButton \/> : undefined\} \/>/);
+    assert.match(app, /footer=\{DevTools \? <DevTools\.TestStoreHarnessButton \/> : undefined\}/);
     assert.equal((app.match(/<DevTools\.TestStoreHarnessButton/g) ?? []).length, 1, 'rendered in one place only');
 
     const settings = read(join(ROOT, 'src', 'screens', 'SettingsScreen.tsx'));
-    assert.match(settings, /export function SettingsScreen\(\{ footer \}: \{ footer\?: React\.ReactNode \}\)/);
+    assert.match(settings, /export function SettingsScreen\(\{ footer, onOpenPro \}: \{ footer\?: React\.ReactNode; onOpenPro\?: \(\) => void \}\)/);
     assert.match(settings, /\{page === 'main' && footer\}/);
     assert.ok(!/TestStore|RevenueCat|Purchases/.test(settings), 'the You screen itself knows nothing about the Test Store');
 
@@ -193,11 +193,16 @@ describe('Test Store harness isolation', () => {
     assert.match(adapter, /isDevelopmentBuild: __DEV__/);
   });
 
-  test('purchases are only started from the development harness', () => {
+  test('purchases are only started from the development harness and the Puphii Pro paywall', () => {
+    const allowed = [join('src', 'subscription', 'paywall.ts'), join('src', 'subscription', 'revenueCatSdk.ts')];
     for (const file of APP_FILES) {
       if (/purchasePackage|purchaseStoreProduct|purchaseProduct\(/.test(read(file))) {
-        assert.ok(file.includes(join('src', 'dev')), `${relative(ROOT, file)} starts a purchase`);
+        assert.ok(file.includes(join('src', 'dev')) || allowed.some((path) => file.endsWith(path)), `${relative(ROOT, file)} starts a purchase`);
       }
+    }
+    for (const file of APP_FILES) {
+      if (file.includes(join('src', 'dev')) || file.endsWith('revenueCatSdk.ts')) continue;
+      assert.ok(!/Purchases\.purchase/.test(read(file)), `${relative(ROOT, file)} calls the native SDK directly`);
     }
   });
 

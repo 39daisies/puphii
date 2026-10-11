@@ -18,6 +18,8 @@ import { REACTION_MODES, ReactionMode } from '../data/types';
 import { FACES, MODE_COPY } from '../mascot/faces';
 import { cancelDailyReminder, scheduleDailyReminder } from '../services/reminders';
 import { playPuffSound, selectionHaptic } from '../services/feedback';
+import { useEntitlement } from '../subscription/EntitlementProvider';
+import { proStatusLabel } from '../subscription/paywall';
 import { colors, fontFamilies, radii, spacing } from '../theme';
 import { formatLongDate, formatTime } from '../utils/format';
 
@@ -32,8 +34,11 @@ const REMINDER_TIMES = [
 
 const timeLabel = (hour: number, minute: number) => formatTime(new Date(2026, 0, 1, hour, minute));
 
-/** `footer` is only ever passed by development builds; release builds show the screen without it. */
-export function SettingsScreen({ footer }: { footer?: React.ReactNode }) {
+/**
+ * `footer` is only ever passed by development builds; release builds show the screen without it.
+ * The Puphii Pro row appears only when `onOpenPro` is passed.
+ */
+export function SettingsScreen({ footer, onOpenPro }: { footer?: React.ReactNode; onOpenPro?: () => void }) {
   const insets = useSafeAreaInsets();
   const [page, setPage] = useState<Page>('main');
 
@@ -52,7 +57,7 @@ export function SettingsScreen({ footer }: { footer?: React.ReactNode }) {
     <View style={styles.root}>
       <OceanBackground variant="calm" />
       <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top }]} showsVerticalScrollIndicator={false}>
-        {page === 'main' && <MainSettings onNavigate={setPage} />}
+        {page === 'main' && <MainSettings onNavigate={setPage} onOpenPro={onOpenPro} />}
         {page === 'reminders' && <RemindersPage onBack={back} />}
         {page === 'data' && <DataPage onBack={back} />}
         {page === 'about' && <AboutPage onBack={back} />}
@@ -62,8 +67,9 @@ export function SettingsScreen({ footer }: { footer?: React.ReactNode }) {
   );
 }
 
-function MainSettings({ onNavigate }: { onNavigate: (page: Page) => void }) {
+function MainSettings({ onNavigate, onOpenPro }: { onNavigate: (page: Page) => void; onOpenPro?: () => void }) {
   const { settings, updateSettings } = usePuphii();
+  const { entitlement } = useEntitlement();
 
   const selectMode = (mode: ReactionMode) => {
     if (mode === settings.mode) return;
@@ -137,6 +143,7 @@ function MainSettings({ onNavigate }: { onNavigate: (page: Page) => void }) {
 
       <SectionHeader title="App Settings" />
       <Card style={styles.group}>
+        {onOpenPro ? <NavRow icon="heart" label="Puphii Pro" detail={proStatusLabel(entitlement)} onPress={onOpenPro} /> : null}
         <NavRow
           icon="bell"
           label="Reminders"

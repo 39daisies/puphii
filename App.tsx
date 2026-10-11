@@ -8,13 +8,16 @@ import { FACES } from './src/mascot/faces';
 import { BubbleBreakScreen } from './src/screens/BubbleBreakScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { INITIAL_INSIGHTS_STATE, InsightsScreen, InsightsState } from './src/screens/InsightsScreen';
+import { PaywallScreen } from './src/screens/PaywallScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { EntitlementProvider } from './src/subscription/EntitlementProvider';
+import { showPaywallEntry } from './src/subscription/paywall';
 import { colors, fontAssets } from './src/theme';
 
 type DevToolsModule = { TestStoreHarnessHost: React.ComponentType; TestStoreHarnessButton: React.ComponentType };
 // Development-only tools. Metro drops this require from production bundles, where __DEV__ is false.
 const DevTools: DevToolsModule | null = __DEV__ ? require('./src/dev/TestStoreHarness') : null;
+const PRO_ENTRY = showPaywallEntry(__DEV__);
 
 export default function App() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
@@ -46,6 +49,7 @@ function AppShell() {
   const [tab, setTab] = useState<TabKey>('home');
   // Bubble Break opens over the current tab rather than being a tab of its own.
   const [playing, setPlaying] = useState(false);
+  const [paywallOpen, setPaywallOpen] = useState(false);
   const [insights, setInsights] = useState<InsightsState>(INITIAL_INSIGHTS_STATE);
   const updateInsights = useCallback((patch: Partial<InsightsState>) => setInsights((state) => ({ ...state, ...patch })), []);
 
@@ -85,11 +89,17 @@ function AppShell() {
               />
             )}
             {tab === 'insights' && <InsightsScreen state={insights} onChange={updateInsights} />}
-            {tab === 'you' && <SettingsScreen footer={DevTools ? <DevTools.TestStoreHarnessButton /> : undefined} />}
+            {tab === 'you' && (
+              <SettingsScreen
+                footer={DevTools ? <DevTools.TestStoreHarnessButton /> : undefined}
+                onOpenPro={PRO_ENTRY ? () => setPaywallOpen(true) : undefined}
+              />
+            )}
           </>
         )}
       </View>
       <TabBar active={tab} onChange={goTo} />
+      {PRO_ENTRY ? <PaywallScreen visible={paywallOpen} onClose={() => setPaywallOpen(false)} /> : null}
     </View>
   );
 }

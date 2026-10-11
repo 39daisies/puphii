@@ -32,6 +32,27 @@ export const PLANS: Record<PlanId, PlanConfig> = {
   monthly: { productIds: { ios: 'puphii_monthly_499', android: null }, packageId: '$rc_monthly', billingPeriod: 'P1M', hasFreeTrial: false },
 };
 
+/**
+ * The offering the paywall uses when RevenueCat's current offering doesn't hold the configured
+ * products. Its packages hold one product per store: the App Store and Test Store products above.
+ */
+export const PAYWALL_OFFERING_ID = 'default_v2';
+
+/**
+ * Links the paywall must show. Null until the owner publishes the documents: never a placeholder
+ * URL. Release builds hide the paywall until both are set (see `paywallConfigIssues`).
+ */
+export const LEGAL_URLS: { termsOfUse: string | null; privacyPolicy: string | null } = {
+  termsOfUse: null,
+  privacyPolicy: null,
+};
+
+/**
+ * What Puphii Pro includes, one line each, as shown on the paywall. Null until the product owner
+ * defines it: with gating off nothing is restricted, so no benefit may be implied until it exists.
+ */
+export const PRO_BENEFITS: readonly string[] | null = null;
+
 /** RevenueCat Test Store products. Never mixed into the App Store or Google Play IDs above. */
 export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly_2999', monthly: 'monthly_499' };
 

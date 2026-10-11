@@ -1,6 +1,7 @@
 import { AppState, NativeModules, Platform } from 'react-native';
 import Purchases, { LOG_LEVEL } from 'react-native-purchases';
 import { productIdsFor, REVENUECAT_ENTITLEMENT_ID } from './config';
+import type { PaywallSdk } from './paywall';
 import { createRevenueCatService, PurchasesSdk, RevenueCatService } from './revenueCat';
 import { selectSdkKey } from './sdkKeys';
 
@@ -43,10 +44,20 @@ export const appSdkKey = selectSdkKey({
 });
 
 /** The product IDs that match the store `appSdkKey` connects to. */
-const appProductIds = productIdsFor(
+export const appProductIds = productIdsFor(
   appSdkKey.ok ? appSdkKey.source : 'platform',
   Platform.OS === 'android' ? 'android' : 'ios',
 );
+
+/** The paywall's RevenueCat calls. Null without a native store module (Expo Go, web). */
+export const paywallSdk: PaywallSdk | null = hasNativeStore
+  ? {
+      isConfigured: () => Purchases.isConfigured(),
+      getOfferings: () => Purchases.getOfferings(),
+      purchasePackage: (pkg) => Purchases.purchasePackage(pkg),
+      checkTrialEligibility: (productIds) => Purchases.checkTrialOrIntroductoryPriceEligibility(productIds),
+    }
+  : null;
 
 export function createAppEntitlementService(): RevenueCatService {
   return createRevenueCatService({
