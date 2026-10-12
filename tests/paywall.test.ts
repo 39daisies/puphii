@@ -8,6 +8,7 @@ import {
   PAYWALL_OFFERING_ID,
   PLANS,
   PRO_BENEFITS,
+  PRO_FEATURE_BENEFITS,
   productIdsFor,
   REVENUECAT_ENTITLEMENT_ID,
   SUBSCRIPTION_GATING_ENABLED,
@@ -794,19 +795,24 @@ describe('Test Store configuration is preserved', () => {
 });
 
 describe('navigation and access', () => {
-  test('gating stays off, so the paywall restricts nothing', () => {
-    assert.equal(SUBSCRIPTION_GATING_ENABLED, false);
+  test('with gating active, people without Pro are locked out of Pro features only until status is confirmed', () => {
+    assert.equal(SUBSCRIPTION_GATING_ENABLED, true);
     const inactive: Entitlement = { status: 'inactive', reason: 'neverSubscribed', lastPlan: null, annualTrial: 'unknown', verification: ACTIVE.verification };
-    for (const entitlement of [inactive, { status: 'unknown' } as Entitlement, { status: 'error', error: { kind: 'network', message: '' } } as Entitlement]) {
-      assert.equal(accessFor(entitlement, { gatingEnabled: SUBSCRIPTION_GATING_ENABLED, allowMock: false }).core, 'granted');
-    }
+    const pro = (entitlement: Entitlement, gatingEnabled: boolean) => accessFor(entitlement, { gatingEnabled, allowMock: false }).pro;
+    assert.equal(pro(inactive, true), 'denied');
+    assert.equal(pro({ status: 'unknown' }, true), 'checking');
+    assert.equal(pro({ status: 'error', error: { kind: 'network', message: '' } }, true), 'checking');
+    for (const entitlement of [inactive, { status: 'unknown' } as Entitlement]) assert.equal(pro(entitlement, false), 'granted');
   });
 
-  test('the paywall is never opened on launch, only from the You screen', () => {
+  test('the paywall is never opened on launch, only from the You screen or a Pro card in Insights', () => {
     const app = read('App.tsx');
     assert.match(app, /const \[paywallOpen, setPaywallOpen\] = useState\(false\);/);
     assert.equal((app.match(/setPaywallOpen\(true\)/g) ?? []).length, 1);
-    assert.match(app, /onOpenPro=\{PRO_ENTRY \? \(\) => setPaywallOpen\(true\) : undefined\}/);
+    assert.match(app, /const openPro = useCallback\(\(\) => setPaywallOpen\(true\), \[\]\);/);
+    assert.match(app, /onOpenPro=\{PRO_ENTRY \? openPro : undefined\}/);
+    assert.match(app, /<ProEntryProvider value=\{PRO_ENTRY \? openPro : undefined\}>\s*<InsightsScreen /);
+    assert.equal((app.match(/<ProEntryProvider/g) ?? []).length, 1, 'only Insights can offer Pro');
     assert.match(app, /<PaywallScreen visible=\{paywallOpen\} onClose=\{\(\) => setPaywallOpen\(false\)\} \/>/);
     for (const screen of ['HomeScreen', 'InsightsScreen', 'BubbleBreakScreen']) {
       assert.ok(!/Paywall|paywall/.test(read('src', 'screens', `${screen}.tsx`)), `${screen} must not open the paywall`);
@@ -818,22 +824,23 @@ describe('navigation and access', () => {
     assert.match(settings, /\{onOpenPro \? <NavRow icon="heart" label="Puphii Pro" detail=\{proStatusLabel\(entitlement\)\} onPress=\{onOpenPro\} \/> : null\}/);
   });
 
-  test('no screen reads subscription status to hide or lock features', () => {
+  test('Home, Bubble Break and the Insights shell never read subscription status', () => {
     for (const screen of ['HomeScreen', 'InsightsScreen', 'BubbleBreakScreen']) {
-      assert.ok(!/useEntitlement|access\.core/.test(read('src', 'screens', `${screen}.tsx`)), screen);
+      assert.ok(!/useEntitlement|access\.pro|ProGate|useProFeature/.test(read('src', 'screens', `${screen}.tsx`)), screen);
     }
   });
 });
 
 describe('release configuration', () => {
-  test('legal links and benefits are unset, not invented', () => {
+  test('legal links are unset, not invented, and the benefits are the gated features', () => {
     assert.deepEqual(LEGAL_URLS, { termsOfUse: null, privacyPolicy: null });
-    assert.equal(PRO_BENEFITS, null);
+    assert.deepEqual(PRO_BENEFITS, Object.values(PRO_FEATURE_BENEFITS));
     assert.ok(!/https?:\/\//.test(read('src', 'screens', 'PaywallScreen.tsx')), 'no hard-coded links in the paywall');
   });
 
   test('release builds hide the paywall until the legal links and benefits are configured', () => {
-    assert.equal(paywallConfigIssues().length, 3);
+    assert.deepEqual(paywallConfigIssues().map((issue) => issue.split(' (')[0]), ['Terms of Use URL', 'Privacy Policy URL'], 'only the legal links are missing');
+    assert.equal(paywallConfigIssues(undefined, null).length, 3);
     assert.equal(showPaywallEntry(false), false);
     assert.equal(showPaywallEntry(true), true, 'development builds can always test it');
     const ready = { termsOfUse: 'https://example.org/terms', privacyPolicy: 'https://example.org/privacy' };

@@ -3,8 +3,8 @@ import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, 
 import { registerDevMenuItems } from 'expo-dev-client';
 import Purchases from 'react-native-purchases';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { REVENUECAT_ENTITLEMENT_ID, SUBSCRIPTION_GATING_ENABLED } from '../subscription/config';
-import { useEntitlement } from '../subscription/EntitlementProvider';
+import { REVENUECAT_ENTITLEMENT_ID } from '../subscription/config';
+import { PRO_GATING_ACTIVE, useEntitlement } from '../subscription/EntitlementProvider';
 import { paywallConfigIssues } from '../subscription/paywall';
 import { KEY_MESSAGES } from '../subscription/revenueCat';
 import { appSdkKey, hasNativeStore } from '../subscription/revenueCatSdk';
@@ -143,8 +143,8 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
               </Text>
             ))}
             <Text style={styles.body}>
-              App access: {access.core}
-              {SUBSCRIPTION_GATING_ENABLED ? '' : ' (gating off: every screen stays available)'}
+              Puphii Pro access: {access.pro}
+              {PRO_GATING_ACTIVE ? '' : ' (gating inactive: every feature stays available)'}
             </Text>
             <Text style={styles.muted}>{keyDescription()}</Text>
             <Text style={styles.muted}>Entitlement identifier: {REVENUECAT_ENTITLEMENT_ID ?? 'not set in config.ts'}</Text>

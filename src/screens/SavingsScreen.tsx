@@ -6,6 +6,7 @@ import { Card } from '../components/Card';
 import { NumberField, TextField } from '../components/Fields';
 import { Icon } from '../components/Icon';
 import { OptionSheet } from '../components/OptionSheet';
+import { ProGate, useProFeature } from '../components/ProGate';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { periodRange, summarizePeriod } from '../data/insights';
 import { usePuphii } from '../data/PuphiiStore';
@@ -32,6 +33,7 @@ import {
 } from '../data/savings';
 import { useToday } from '../hooks/useToday';
 import { FACES } from '../mascot/faces';
+import { SPENDING_PROJECTIONS } from '../subscription/proFeatures';
 import { colors, fontFamilies, MAX_CONTENT_WIDTH, radii, spacing, TOUCH_TARGET } from '../theme';
 import { pluralize } from '../utils/format';
 
@@ -42,6 +44,7 @@ export function SavingsScreen({ header }: { header: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const today = useToday();
   const [currencyOpen, setCurrencyOpen] = useState(false);
+  const projections = useProFeature(SPENDING_PROJECTIONS);
 
   const type = savings.productType;
   const product = PRODUCTS[type];
@@ -187,8 +190,12 @@ export function SavingsScreen({ header }: { header: React.ReactNode }) {
                 amounts={[
                   ['Per day', money(estimate.daily)],
                   ['Per week', money(estimate.weekly)],
-                  ['Per month', money(estimate.monthly)],
-                  ['Per year', money(estimate.annual)],
+                  ...(projections
+                    ? ([
+                        ['Per month', money(estimate.monthly)],
+                        ['Per year', money(estimate.annual)],
+                      ] as [string, string][])
+                    : []),
                 ]}
               />
               <AppText variant="caption" style={styles.note}>
@@ -204,129 +211,131 @@ export function SavingsScreen({ header }: { header: React.ReactNode }) {
           )}
         </Card>
 
-        <Card style={[styles.card, styles.resultCard, !hasEstimate && styles.messageCard]}>
-          <AppText variant="cardTitle" accessibilityRole="header">
-            If you used less
-          </AppText>
-          {estimate.status === 'ok' ? (
-            <>
-              <AppText variant="caption">Illustrative scenarios: estimated spending × the reduction. Tap one to use it below.</AppText>
-              <View style={styles.scenarios} accessibilityRole="radiogroup">
-                {scenarioPercents.map((value) => {
-                  const scenario = savingsScenario(estimate, value)!;
-                  const active = value === percent;
-                  return (
-                    <Pressable
-                      key={value}
-                      accessibilityRole="radio"
-                      aria-checked={active}
-                      accessibilityLabel={`${value}% less: about ${money(scenario.monthly)} a month, ${money(scenario.annual)} a year`}
-                      onPress={() => updateSavings((current) => ({ ...current, reductionPercent: value }))}
-                      style={({ pressed }) => [
-                        styles.scenario,
-                        stackScenarios && styles.scenarioStacked,
-                        active && styles.chipSelected,
-                        pressed && { opacity: 0.8 },
-                      ]}
-                    >
-                      <AppText variant="label" color={active ? colors.coralInk : colors.textPrimary} style={[styles.scenarioPercent, active && styles.bold]}>
-                        {value}% less
-                      </AppText>
-                      <View style={[styles.scenarioValues, stackScenarios && styles.scenarioValuesStacked]}>
-                        {/* The no-break space keeps "/ month" together, so a line only ever breaks before it. */}
-                        <AppText variant="bodyStrong" align={stackScenarios ? 'left' : 'right'} style={styles.breakAnywhere}>
-                          {money(scenario.monthly)} /{'\u00A0'}month
-                        </AppText>
-                        <AppText variant="caption" align={stackScenarios ? 'left' : 'right'} style={styles.breakAnywhere}>
-                          {money(scenario.annual)} /{'\u00A0'}year
-                        </AppText>
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              <View style={styles.stepper}>
-                <StepButton
-                  icon="minus"
-                  label={`Lower the reduction by ${REDUCTION_STEP} percent`}
-                  disabled={percent <= REDUCTION_STEP}
-                  onPress={() => updateSavings((current) => ({ ...current, reductionPercent: clampReduction(current.reductionPercent - REDUCTION_STEP) }))}
-                />
-                <View style={styles.stepperValue} accessible accessibilityLiveRegion="polite" accessibilityLabel={`Your scenario: ${percent} percent less`}>
-                  <AppText variant="caption" align="center">
-                    Your scenario
-                  </AppText>
-                  <AppText variant="sectionTitle" align="center">
-                    {percent}% less
-                  </AppText>
-                </View>
-                <StepButton
-                  icon="plus"
-                  label={`Raise the reduction by ${REDUCTION_STEP} percent`}
-                  disabled={percent >= 100}
-                  onPress={() => updateSavings((current) => ({ ...current, reductionPercent: clampReduction(current.reductionPercent + REDUCTION_STEP) }))}
-                />
-              </View>
-              <AppText variant="caption" style={styles.note}>
-                This assumes you'd buy less in the same proportion. Logging fewer puffs doesn't necessarily mean buying less, so treat
-                these as rough projections, not guarantees.
-              </AppText>
-            </>
-          ) : (
-            <AppText variant="bodySmall">
-              {estimate.status === 'zero'
-                ? 'With zero estimated spending, there are no savings to show.'
-                : 'Your potential savings will appear here once your spending estimate is ready.'}
+        <ProGate feature={SPENDING_PROJECTIONS}>
+          <Card style={[styles.card, styles.resultCard, !hasEstimate && styles.messageCard]}>
+            <AppText variant="cardTitle" accessibilityRole="header">
+              If you used less
             </AppText>
-          )}
-        </Card>
-
-        <Card style={[styles.card, styles.compactCard]}>
-          <AppText variant="cardTitle" accessibilityRole="header">
-            Savings goal
-          </AppText>
-          <View style={styles.fields}>
-            <TextField
-              label="Goal (optional)"
-              value={savings.goalName}
-              onChange={(goalName) => updateSavings((current) => ({ ...current, goalName }))}
-              placeholder="A trip, a gift, anything"
-              maxLength={MAX_GOAL_NAME}
-            />
-            <NumberField
-              label={fieldLabel(type, 'goalAmount')}
-              value={savings.goalAmount}
-              onChange={(goalAmount) => updateSavings((current) => ({ ...current, goalAmount }))}
-              validate={validator('goalAmount')}
-              suffix={currency}
-            />
-          </View>
-          <View style={goal.status === 'ok' && selected ? styles.goalResult : null} accessibilityLiveRegion="polite">
-            {goal.status === 'ok' && selected ? (
+            {estimate.status === 'ok' ? (
               <>
-                <AppText variant="headline" color={colors.textPrimary}>
-                  {capitalize(formatDuration(goal.days))}
+                <AppText variant="caption">Illustrative scenarios: estimated spending × the reduction. Tap one to use it below.</AppText>
+                <View style={styles.scenarios} accessibilityRole="radiogroup">
+                  {scenarioPercents.map((value) => {
+                    const scenario = savingsScenario(estimate, value)!;
+                    const active = value === percent;
+                    return (
+                      <Pressable
+                        key={value}
+                        accessibilityRole="radio"
+                        aria-checked={active}
+                        accessibilityLabel={`${value}% less: about ${money(scenario.monthly)} a month, ${money(scenario.annual)} a year`}
+                        onPress={() => updateSavings((current) => ({ ...current, reductionPercent: value }))}
+                        style={({ pressed }) => [
+                          styles.scenario,
+                          stackScenarios && styles.scenarioStacked,
+                          active && styles.chipSelected,
+                          pressed && { opacity: 0.8 },
+                        ]}
+                      >
+                        <AppText variant="label" color={active ? colors.coralInk : colors.textPrimary} style={[styles.scenarioPercent, active && styles.bold]}>
+                          {value}% less
+                        </AppText>
+                        <View style={[styles.scenarioValues, stackScenarios && styles.scenarioValuesStacked]}>
+                          {/* The no-break space keeps "/ month" together, so a line only ever breaks before it. */}
+                          <AppText variant="bodyStrong" align={stackScenarios ? 'left' : 'right'} style={styles.breakAnywhere}>
+                            {money(scenario.monthly)} /{'\u00A0'}month
+                          </AppText>
+                          <AppText variant="caption" align={stackScenarios ? 'left' : 'right'} style={styles.breakAnywhere}>
+                            {money(scenario.annual)} /{'\u00A0'}year
+                          </AppText>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <View style={styles.stepper}>
+                  <StepButton
+                    icon="minus"
+                    label={`Lower the reduction by ${REDUCTION_STEP} percent`}
+                    disabled={percent <= REDUCTION_STEP}
+                    onPress={() => updateSavings((current) => ({ ...current, reductionPercent: clampReduction(current.reductionPercent - REDUCTION_STEP) }))}
+                  />
+                  <View style={styles.stepperValue} accessible accessibilityLiveRegion="polite" accessibilityLabel={`Your scenario: ${percent} percent less`}>
+                    <AppText variant="caption" align="center">
+                      Your scenario
+                    </AppText>
+                    <AppText variant="sectionTitle" align="center">
+                      {percent}% less
+                    </AppText>
+                  </View>
+                  <StepButton
+                    icon="plus"
+                    label={`Raise the reduction by ${REDUCTION_STEP} percent`}
+                    disabled={percent >= 100}
+                    onPress={() => updateSavings((current) => ({ ...current, reductionPercent: clampReduction(current.reductionPercent + REDUCTION_STEP) }))}
+                  />
+                </View>
+                <AppText variant="caption" style={styles.note}>
+                  This assumes you'd buy less in the same proportion. Logging fewer puffs doesn't necessarily mean buying less, so treat
+                  these as rough projections, not guarantees.
                 </AppText>
-                <AppText variant="bodySmall" color={colors.textPrimary}>
-                  If you used {percent}% less, estimated savings of about {money(selected.monthly)} a month could reach{' '}
-                  {savings.goalName.trim() ? `“${savings.goalName.trim()}” (${money(savings.goalAmount!)})` : money(savings.goalAmount!)} in{' '}
-                  {formatDuration(goal.days)}.
-                </AppText>
-                <AppText variant="caption">This is a projection, not money you've already saved.</AppText>
               </>
             ) : (
               <AppText variant="bodySmall">
-                {goal.status === 'needsEstimate'
-                  ? estimate.status === 'zero'
-                    ? 'With zero estimated spending, there are no projected savings toward a goal.'
-                    : 'Complete your spending details above to see how long your goal could take.'
-                  : goal.status === 'needsAmount'
-                    ? 'Add a target amount to see a timeline.'
-                    : `At ${percent}% less, this goal would take more than 50 years to reach.`}
+                {estimate.status === 'zero'
+                  ? 'With zero estimated spending, there are no savings to show.'
+                  : 'Your potential savings will appear here once your spending estimate is ready.'}
               </AppText>
             )}
-          </View>
-        </Card>
+          </Card>
+
+          <Card style={[styles.card, styles.compactCard]}>
+            <AppText variant="cardTitle" accessibilityRole="header">
+              Savings goal
+            </AppText>
+            <View style={styles.fields}>
+              <TextField
+                label="Goal (optional)"
+                value={savings.goalName}
+                onChange={(goalName) => updateSavings((current) => ({ ...current, goalName }))}
+                placeholder="A trip, a gift, anything"
+                maxLength={MAX_GOAL_NAME}
+              />
+              <NumberField
+                label={fieldLabel(type, 'goalAmount')}
+                value={savings.goalAmount}
+                onChange={(goalAmount) => updateSavings((current) => ({ ...current, goalAmount }))}
+                validate={validator('goalAmount')}
+                suffix={currency}
+              />
+            </View>
+            <View style={goal.status === 'ok' && selected ? styles.goalResult : null} accessibilityLiveRegion="polite">
+              {goal.status === 'ok' && selected ? (
+                <>
+                  <AppText variant="headline" color={colors.textPrimary}>
+                    {capitalize(formatDuration(goal.days))}
+                  </AppText>
+                  <AppText variant="bodySmall" color={colors.textPrimary}>
+                    If you used {percent}% less, estimated savings of about {money(selected.monthly)} a month could reach{' '}
+                    {savings.goalName.trim() ? `“${savings.goalName.trim()}” (${money(savings.goalAmount!)})` : money(savings.goalAmount!)} in{' '}
+                    {formatDuration(goal.days)}.
+                  </AppText>
+                  <AppText variant="caption">This is a projection, not money you've already saved.</AppText>
+                </>
+              ) : (
+                <AppText variant="bodySmall">
+                  {goal.status === 'needsEstimate'
+                    ? estimate.status === 'zero'
+                      ? 'With zero estimated spending, there are no projected savings toward a goal.'
+                      : 'Complete your spending details above to see how long your goal could take.'
+                    : goal.status === 'needsAmount'
+                      ? 'Add a target amount to see a timeline.'
+                      : `At ${percent}% less, this goal would take more than 50 years to reach.`}
+                </AppText>
+              )}
+            </View>
+          </Card>
+        </ProGate>
 
         <Card style={[styles.card, styles.compactCard]}>
           <AppText variant="cardTitle" accessibilityRole="header">

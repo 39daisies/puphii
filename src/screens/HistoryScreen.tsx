@@ -7,6 +7,7 @@ import { IconButton, SecondaryButton } from '../components/Buttons';
 import { Card } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
+import { ProGate } from '../components/ProGate';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { addLocalDays, dailySeries, DayGroup, groupLogsByDay, localDayKey, weeklySeries } from '../data/puffLogic';
@@ -14,6 +15,7 @@ import { usePuphii } from '../data/PuphiiStore';
 import { PuffLog } from '../data/types';
 import { useToday } from '../hooks/useToday';
 import { FACES } from '../mascot/faces';
+import { historyFeature } from '../subscription/proFeatures';
 import { colors, MAX_CONTENT_WIDTH, radii, spacing } from '../theme';
 import { formatFullDay, formatLongDate, formatShortDate, formatTime, formatWeekday, pluralize } from '../utils/format';
 
@@ -119,20 +121,22 @@ export function HistoryScreen({ header, range, onRangeChange }: Props) {
         {header ?? <ScreenHeader title="History" />}
         <SegmentedControl options={RANGE_OPTIONS} value={range} onChange={onRangeChange} />
 
-        <Card style={styles.chartCard}>
-          <AppText variant="cardTitle">{chartTitle}</AppText>
-          <View style={styles.chart}>
-            <BarChart data={bars} showValues={!dense} dense={dense} height={dense ? 110 : 120} />
-          </View>
-          <View style={styles.stats}>
-            {stats.map((stat) => (
-              <View key={stat.label} style={styles.stat} accessible accessibilityLabel={`${stat.label}: ${stat.value}`}>
-                <AppText variant="statValue">{stat.value}</AppText>
-                <AppText variant="caption">{stat.label}</AppText>
-              </View>
-            ))}
-          </View>
-        </Card>
+        <ProGate feature={historyFeature(range)} onNotNow={() => onRangeChange('week')}>
+          <Card style={styles.chartCard}>
+            <AppText variant="cardTitle">{chartTitle}</AppText>
+            <View style={styles.chart}>
+              <BarChart data={bars} showValues={!dense} dense={dense} height={dense ? 110 : 120} />
+            </View>
+            <View style={styles.stats}>
+              {stats.map((stat) => (
+                <View key={stat.label} style={styles.stat} accessible accessibilityLabel={`${stat.label}: ${stat.value}`}>
+                  <AppText variant="statValue">{stat.value}</AppText>
+                  <AppText variant="caption">{stat.label}</AppText>
+                </View>
+              ))}
+            </View>
+          </Card>
+        </ProGate>
 
         <DaySection group={todayGroup} title="Today" onDelete={setPendingDelete} emptyText="No puffs logged today." />
 

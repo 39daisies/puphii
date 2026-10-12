@@ -1,7 +1,15 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { SUBSCRIPTION_GATING_ENABLED } from './config';
 import { Access, accessFor, Entitlement, RestoreResult } from './entitlement';
-import { createAppEntitlementService } from './revenueCatSdk';
+import { showPaywallEntry } from './paywall';
+import { proGatingActive } from './proFeatures';
+import { appSdkKey, createAppEntitlementService, hasNativeStore } from './revenueCatSdk';
+
+export const PRO_GATING_ACTIVE = proGatingActive({
+  enabled: SUBSCRIPTION_GATING_ENABLED,
+  paywallAvailable: showPaywallEntry(__DEV__),
+  storeReady: hasNativeStore && appSdkKey.ok,
+});
 
 type EntitlementContextValue = {
   entitlement: Entitlement;
@@ -12,7 +20,7 @@ type EntitlementContextValue = {
 
 const EntitlementContext = createContext<EntitlementContextValue | null>(null);
 
-/** Keeps subscription status current. Nothing reads it to restrict access while gating is off. */
+/** Keeps subscription status current, and is the only place Puphii Pro access is worked out. */
 export function EntitlementProvider({ children }: { children: React.ReactNode }) {
   const [service] = useState(createAppEntitlementService);
   const [entitlement, setEntitlement] = useState<Entitlement>(() => service.current());
@@ -35,7 +43,7 @@ export function EntitlementProvider({ children }: { children: React.ReactNode })
   const value = useMemo<EntitlementContextValue>(
     () => ({
       entitlement,
-      access: accessFor(entitlement, { gatingEnabled: SUBSCRIPTION_GATING_ENABLED, allowMock: __DEV__ }),
+      access: accessFor(entitlement, { gatingEnabled: PRO_GATING_ACTIVE, allowMock: __DEV__ }),
       refresh: service.refresh,
       restorePurchases: service.restorePurchases,
     }),

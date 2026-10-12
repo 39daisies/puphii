@@ -5,6 +5,7 @@ import { AppText } from '../components/AppText';
 import { Bar, BarChart, spokenBar } from '../components/BarChart';
 import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
+import { ProGate } from '../components/ProGate';
 import { SegmentedControl } from '../components/SegmentedControl';
 import {
   comparisonText,
@@ -23,6 +24,7 @@ import {
 import { localDayKey } from '../data/puffLogic';
 import { usePuphii } from '../data/PuphiiStore';
 import { useToday } from '../hooks/useToday';
+import { overviewFeature } from '../subscription/proFeatures';
 import { colors, fontFamilies, MAX_CONTENT_WIDTH, radii, spacing, TOUCH_TARGET } from '../theme';
 import { formatFullDay, formatMonth, formatMonthYear, formatWeekday, pluralize } from '../utils/format';
 
@@ -142,89 +144,91 @@ export function InsightsOverview({ header, period, offset, onPeriodChange, onOff
           </Pressable>
         ) : null}
 
-        <Card style={styles.card}>
-          <View style={styles.stats}>
-            <Stat value={String(summary.total)} label="Logged puffs" />
-            <Stat
-              value={formatAverage(summary.average)}
-              label={inProgress ? 'Per day so far' : 'Per day'}
-              spoken={`Average per day${inProgress ? ' so far' : ''}: ${formatAverage(summary.average).replace('<', 'less than ')}`}
-            />
-            <Stat
-              value={String(summary.daysWithLogs)}
-              suffix={`/${range.elapsedDays}`}
-              label="Days with logs"
-              spoken={`${summary.daysWithLogs} of ${pluralize(range.elapsedDays, 'day')} had logs`}
-            />
-          </View>
-          <View style={styles.comparison} accessible>
-            <Icon name="history" size={18} color={colors.textMuted} />
-            <AppText variant="bodySmall" color={colors.textPrimary} style={styles.flex}>
-              {comparisonText(summary)}
-            </AppText>
-          </View>
-        </Card>
-
-        <Card style={styles.card}>
-          <View style={styles.cardHeader}>
-            <AppText variant="cardTitle" accessibilityRole="header">
-              {period === 'year' ? 'Logged puffs by month' : 'Logged puffs by day'}
-            </AppText>
-            <AppText variant="caption" accessibilityLiveRegion="polite" numberOfLines={1}>
-              {selectedBar ? spokenBar(selectedBar) : `Tap a bar to see that ${unit}'s count.`}
-            </AppText>
-          </View>
-          <BarChart
-            data={bars}
-            height={period === 'week' ? 110 : 120}
-            showValues={period === 'week'}
-            dense={period === 'month'}
-            onSelect={(key) => setSelectedKey((current) => (current === key ? null : key))}
-            selectedKey={selectedKey}
-          />
-        </Card>
-
-        <Card style={styles.card}>
-          <AppText variant="cardTitle" accessibilityRole="header">
-            When you tend to log puffs
-          </AppText>
-          {timeOfDay.total < MIN_LOGS_FOR_PATTERNS ? (
-            <AppText variant="bodySmall" style={styles.patternEmpty}>
-              Keep logging to discover when your puffs tend to happen.
-            </AppText>
-          ) : (
-            <>
-              <View style={styles.parts}>
-                {DAY_PARTS.map(({ part, label, hours }) => {
-                  const share = timeOfDay.parts.find((entry) => entry.part === part)!;
-                  return (
-                    <View
-                      key={part}
-                      style={styles.partRow}
-                      accessible
-                      accessibilityLabel={`${label}, ${hours}: ${pluralize(share.count, 'logged puff')}, ${share.percent} percent`}
-                    >
-                      <View style={styles.partLabel}>
-                        <AppText variant="label">{label}</AppText>
-                        <AppText variant="caption">{hours}</AppText>
-                      </View>
-                      <View style={styles.partTrack}>
-                        <View style={[styles.partFill, { width: `${share.percent}%` }]} />
-                      </View>
-                      <AppText variant="label" align="right" style={styles.partValue}>
-                        {share.percent}%
-                      </AppText>
-                    </View>
-                  );
-                })}
-              </View>
-              <AppText variant="caption" style={styles.note}>
-                Based on {pluralize(timeOfDay.total, 'puff')} logged during this period. It shows a pattern in your logs, not a
-                diagnosis.
+        <ProGate feature={overviewFeature(period, safeOffset)} onNotNow={() => changePeriod('week')}>
+          <Card style={styles.card}>
+            <View style={styles.stats}>
+              <Stat value={String(summary.total)} label="Logged puffs" />
+              <Stat
+                value={formatAverage(summary.average)}
+                label={inProgress ? 'Per day so far' : 'Per day'}
+                spoken={`Average per day${inProgress ? ' so far' : ''}: ${formatAverage(summary.average).replace('<', 'less than ')}`}
+              />
+              <Stat
+                value={String(summary.daysWithLogs)}
+                suffix={`/${range.elapsedDays}`}
+                label="Days with logs"
+                spoken={`${summary.daysWithLogs} of ${pluralize(range.elapsedDays, 'day')} had logs`}
+              />
+            </View>
+            <View style={styles.comparison} accessible>
+              <Icon name="history" size={18} color={colors.textMuted} />
+              <AppText variant="bodySmall" color={colors.textPrimary} style={styles.flex}>
+                {comparisonText(summary)}
               </AppText>
-            </>
-          )}
-        </Card>
+            </View>
+          </Card>
+
+          <Card style={styles.card}>
+            <View style={styles.cardHeader}>
+              <AppText variant="cardTitle" accessibilityRole="header">
+                {period === 'year' ? 'Logged puffs by month' : 'Logged puffs by day'}
+              </AppText>
+              <AppText variant="caption" accessibilityLiveRegion="polite" numberOfLines={1}>
+                {selectedBar ? spokenBar(selectedBar) : `Tap a bar to see that ${unit}'s count.`}
+              </AppText>
+            </View>
+            <BarChart
+              data={bars}
+              height={period === 'week' ? 110 : 120}
+              showValues={period === 'week'}
+              dense={period === 'month'}
+              onSelect={(key) => setSelectedKey((current) => (current === key ? null : key))}
+              selectedKey={selectedKey}
+            />
+          </Card>
+
+          <Card style={styles.card}>
+            <AppText variant="cardTitle" accessibilityRole="header">
+              When you tend to log puffs
+            </AppText>
+            {timeOfDay.total < MIN_LOGS_FOR_PATTERNS ? (
+              <AppText variant="bodySmall" style={styles.patternEmpty}>
+                Keep logging to discover when your puffs tend to happen.
+              </AppText>
+            ) : (
+              <>
+                <View style={styles.parts}>
+                  {DAY_PARTS.map(({ part, label, hours }) => {
+                    const share = timeOfDay.parts.find((entry) => entry.part === part)!;
+                    return (
+                      <View
+                        key={part}
+                        style={styles.partRow}
+                        accessible
+                        accessibilityLabel={`${label}, ${hours}: ${pluralize(share.count, 'logged puff')}, ${share.percent} percent`}
+                      >
+                        <View style={styles.partLabel}>
+                          <AppText variant="label">{label}</AppText>
+                          <AppText variant="caption">{hours}</AppText>
+                        </View>
+                        <View style={styles.partTrack}>
+                          <View style={[styles.partFill, { width: `${share.percent}%` }]} />
+                        </View>
+                        <AppText variant="label" align="right" style={styles.partValue}>
+                          {share.percent}%
+                        </AppText>
+                      </View>
+                    );
+                  })}
+                </View>
+                <AppText variant="caption" style={styles.note}>
+                  Based on {pluralize(timeOfDay.total, 'puff')} logged during this period. It shows a pattern in your logs, not a
+                  diagnosis.
+                </AppText>
+              </>
+            )}
+          </Card>
+        </ProGate>
 
         <AppText variant="caption" align="center" style={styles.footnote}>
           These figures count the puffs you logged in Puphii. They don't measure nicotine or health.

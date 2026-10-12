@@ -30,16 +30,16 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe('subscription access', () => {
-  test('gating is off, so every status keeps today’s full access', () => {
-    assert.equal(SUBSCRIPTION_GATING_ENABLED, false);
+  test('gating is switched on, but every status keeps full access wherever it is inactive', () => {
+    assert.equal(SUBSCRIPTION_GATING_ENABLED, true);
     for (const entitlement of EVERY_STATE) {
-      assert.equal(accessFor(entitlement, { gatingEnabled: SUBSCRIPTION_GATING_ENABLED, allowMock: false }).core, 'granted');
+      assert.equal(accessFor(entitlement, { gatingEnabled: false, allowMock: false }).pro, 'granted');
     }
   });
 
-  test('with gating on, only store-verified active or grace-period access unlocks core features', () => {
+  test('with gating active, only store-verified active or grace-period access unlocks Pro features', () => {
     const on = { gatingEnabled: true, allowMock: false };
-    const core = (entitlement: Entitlement) => accessFor(storeVerified(entitlement), on).core;
+    const core = (entitlement: Entitlement) => accessFor(storeVerified(entitlement), on).pro;
     assert.equal(core(mockEntitlements.active('annual', 'trial')), 'granted');
     assert.equal(core(mockEntitlements.active('annual', 'paid')), 'granted');
     assert.equal(core(mockEntitlements.active('monthly', 'paid')), 'granted');
@@ -53,8 +53,8 @@ describe('subscription access', () => {
 
   test('mock entitlements never unlock anything outside development', () => {
     const active = mockEntitlements.active('annual');
-    assert.equal(accessFor(active, { gatingEnabled: true, allowMock: false }).core, 'denied');
-    assert.equal(accessFor(active, { gatingEnabled: true, allowMock: true }).core, 'granted');
+    assert.equal(accessFor(active, { gatingEnabled: true, allowMock: false }).pro, 'denied');
+    assert.equal(accessFor(active, { gatingEnabled: true, allowMock: true }).pro, 'granted');
   });
 
   test('viewing, deleting and exporting your own data never depends on subscription status', () => {

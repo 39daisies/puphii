@@ -692,7 +692,7 @@ describe('RevenueCat entitlement service', () => {
     await settle();
     const state = service.current();
     assert.ok(state.status === 'error' && state.error.kind === 'network');
-    assert.equal(accessFor(state, { gatingEnabled: true, allowMock: false }).core, 'checking');
+    assert.equal(accessFor(state, { gatingEnabled: true, allowMock: false }).pro, 'checking');
   });
 
   test('non-network failures replace the earlier answer with an explicit error', async () => {
@@ -1027,9 +1027,9 @@ describe('Diagnostics', () => {
   });
 });
 
-describe('access stays open in this phase', () => {
-  test('every status the RevenueCat service can report keeps full access while gating is off', async () => {
-    assert.equal(SUBSCRIPTION_GATING_ENABLED, false);
+describe('access stays open wherever Pro cannot be bought', () => {
+  test('every status the RevenueCat service can report keeps full access while gating is inactive', async () => {
+    assert.equal(SUBSCRIPTION_GATING_ENABLED, true, 'switched on, but only active where the paywall and store are ready');
     const states: Entitlement[] = [{ status: 'unknown' }];
     for (const overrides of [{ sdk: null }, { key: { ok: false, reason: 'missing' } as SdkKeyCheck }, {}]) {
       const { service } = setup(overrides);
@@ -1052,7 +1052,7 @@ describe('access stays open in this phase', () => {
     );
     for (const state of states) {
       for (const allowMock of [true, false]) {
-        assert.equal(accessFor(state, { gatingEnabled: SUBSCRIPTION_GATING_ENABLED, allowMock }).core, 'granted');
+        assert.equal(accessFor(state, { gatingEnabled: false, allowMock }).pro, 'granted');
       }
     }
   });

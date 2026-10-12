@@ -55,19 +55,23 @@ export const isAnnualTrialEligible = (entitlement: Entitlement): boolean =>
   entitlement.status === 'inactive' && entitlement.annualTrial === 'eligible';
 
 /** `checking` means "can't tell yet": show progress or a retry, never a paywall and never unlocked content. */
-export type CoreAccess = 'granted' | 'denied' | 'checking';
+export type ProAccess = 'granted' | 'denied' | 'checking';
 
-/** People can always see, delete and export their own data, whatever their subscription status. */
-export type Access = { core: CoreAccess; viewData: true; deleteData: true; exportData: true };
+/**
+ * `pro` covers Puphii Pro features only: logging, Bubble Break and everything else stay free.
+ * People can always see, delete and export their own data, whatever their subscription status.
+ */
+export type Access = { pro: ProAccess; viewData: true; deleteData: true; exportData: true };
 
 export type AccessOptions = {
+  /** False wherever Pro can't be bought, so nothing is locked there. */
   gatingEnabled: boolean;
   /** Mock entitlements only count in development builds and tests. */
   allowMock: boolean;
 };
 
 export function accessFor(entitlement: Entitlement, { gatingEnabled, allowMock }: AccessOptions): Access {
-  const access = (core: CoreAccess): Access => ({ core, viewData: true, deleteData: true, exportData: true });
+  const access = (pro: ProAccess): Access => ({ pro, viewData: true, deleteData: true, exportData: true });
   if (!gatingEnabled) return access('granted');
   switch (entitlement.status) {
     case 'unknown':

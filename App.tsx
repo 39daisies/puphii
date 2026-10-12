@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { BackHandler, Image, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
+import { ProEntryProvider } from './src/components/ProGate';
 import { TabBar, TabKey } from './src/components/TabBar';
 import { PuphiiProvider } from './src/data/PuphiiStore';
 import { FACES } from './src/mascot/faces';
@@ -50,6 +51,7 @@ function AppShell() {
   // Bubble Break opens over the current tab rather than being a tab of its own.
   const [playing, setPlaying] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
+  const openPro = useCallback(() => setPaywallOpen(true), []);
   // Held here so Pause survives tab changes; deliberately not saved between launches.
   const [reefPaused, setReefPaused] = useState(false);
   const toggleReef = useCallback(() => setReefPaused((paused) => !paused), []);
@@ -93,11 +95,15 @@ function AppShell() {
                 onToggleMotion={toggleReef}
               />
             )}
-            {tab === 'insights' && <InsightsScreen state={insights} onChange={updateInsights} />}
+            {tab === 'insights' && (
+              <ProEntryProvider value={PRO_ENTRY ? openPro : undefined}>
+                <InsightsScreen state={insights} onChange={updateInsights} />
+              </ProEntryProvider>
+            )}
             {tab === 'you' && (
               <SettingsScreen
                 footer={DevTools ? <DevTools.TestStoreHarnessButton /> : undefined}
-                onOpenPro={PRO_ENTRY ? () => setPaywallOpen(true) : undefined}
+                onOpenPro={PRO_ENTRY ? openPro : undefined}
               />
             )}
           </>

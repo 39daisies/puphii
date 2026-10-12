@@ -221,12 +221,13 @@ describe('Test Store harness isolation', () => {
     }
   });
 
-  test('gating stays off, so a Test Store subscription changes no screen', () => {
-    assert.equal(SUBSCRIPTION_GATING_ENABLED, false);
-    for (const info of [customer(), customer([testStoreEntry()]), customer([testStoreEntry({ isActive: false })])]) {
-      const entitlement = entitlementFromCustomerInfo(info, ENTITLEMENT, NO_PRODUCTS);
-      assert.equal(accessFor(entitlement, { gatingEnabled: SUBSCRIPTION_GATING_ENABLED, allowMock: false }).core, 'granted');
-    }
+  test('in development, an active Test Store subscription unlocks Puphii Pro and an ended one does not', () => {
+    assert.equal(SUBSCRIPTION_GATING_ENABLED, true);
+    const pro = (info: ReturnType<typeof customer>) =>
+      accessFor(entitlementFromCustomerInfo(info, ENTITLEMENT, NO_PRODUCTS), { gatingEnabled: true, allowMock: false }).pro;
+    assert.equal(pro(customer([testStoreEntry()])), 'granted');
+    assert.equal(pro(customer([testStoreEntry({ isActive: false })])), 'denied');
+    assert.equal(pro(customer()), 'denied');
   });
 });
 

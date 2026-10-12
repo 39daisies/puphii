@@ -1,8 +1,11 @@
 import { PlanId } from './entitlement';
 import { KeySource, StorePlatform } from './sdkKeys';
 
-/** While false, every feature stays available exactly as it is today. */
-export const SUBSCRIPTION_GATING_ENABLED = false;
+/**
+ * Turns Puphii Pro gating on. It only takes effect where Pro can actually be bought: see
+ * `proGatingActive`. While the paywall is hidden, every feature stays available.
+ */
+export const SUBSCRIPTION_GATING_ENABLED = true;
 
 /**
  * Identifier of the RevenueCat entitlement that unlocks Puphii's premium experience. Shared by
@@ -49,10 +52,18 @@ export const LEGAL_URLS: { termsOfUse: string | null; privacyPolicy: string | nu
 };
 
 /**
- * What Puphii Pro includes, one line each, as shown on the paywall. Null until the product owner
- * defines it: with gating off nothing is restricted, so no benefit may be implied until it exists.
+ * What each Puphii Pro feature is called on the paywall. Every key is an existing screen section
+ * gated in the app (see `proFeatures.ts`): never list something the app doesn't gate.
  */
-export const PRO_BENEFITS: readonly string[] | null = null;
+export const PRO_FEATURE_BENEFITS = {
+  monthlyYearlyTrends: 'Monthly and yearly trends in your logged puffs',
+  pastPeriods: 'Look back at any past week, month or year',
+  extendedHistory: '30-day and all-time history charts',
+  spendingProjections: 'Monthly and yearly spending estimates, savings scenarios and goal timelines',
+} as const;
+
+/** What Puphii Pro includes, one line each, as shown on the paywall. */
+export const PRO_BENEFITS: readonly string[] | null = Object.values(PRO_FEATURE_BENEFITS);
 
 /** RevenueCat Test Store products. Never mixed into the App Store or Google Play IDs above. */
 export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly_2999', monthly: 'monthly_499', weekly: 'weekly_199' };
