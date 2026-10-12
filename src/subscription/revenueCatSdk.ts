@@ -11,7 +11,8 @@ const purchasesSdk: PurchasesSdk = {
   configure(apiKey) {
     if (configured) return;
     void Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.WARN);
-    // Anonymous RevenueCat user: no account or personal identifier is sent.
+    // No app user ID: RevenueCat assigns a random customer ID. The SDK still sends the IDFV and
+    // device details (see docs/PRIVACY_POLICY_DRAFT.md), so this is pseudonymous, not anonymous.
     Purchases.configure({
       apiKey,
       appUserID: null,

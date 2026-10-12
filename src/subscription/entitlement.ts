@@ -1,4 +1,4 @@
-export type PlanId = 'annual' | 'monthly';
+export type PlanId = 'annual' | 'monthly' | 'weekly';
 
 /**
  * Where an entitlement came from. There is deliberately no on-device source: a stored

@@ -18,9 +18,21 @@ export const FACES = {
   dizzy: require('../../assets/puffy/dizzy.png'),
   furiousSteam: require('../../assets/puffy/furious_steam.png'),
   recovering: require('../../assets/puffy/recovering.png'),
+  /** Squinting with a lit cigarette and translucent smoke; cut out from a black background. */
+  smokySquint: require('../../assets/puffy/smoky_squint.png'),
 } satisfies Record<string, ImageSourcePropType>;
 
 export type FaceName = keyof typeof FACES;
+
+/**
+ * Happy idle sprites for the Home reef: side-on (facing left) and facing the viewer. Re-framed
+ * from the reef page artwork onto the same 512 px canvas, body width and centre as `FACES`, so
+ * switching to a reaction face doesn't make Puphii jump or change size.
+ */
+export const SWIM_SPRITES = {
+  side: require('../../assets/puffy/swim_happy.png'),
+  front: require('../../assets/puffy/front_happy.png'),
+} satisfies Record<string, ImageSourcePropType>;
 
 export type ReactionSpec = {
   faces: FaceName[];
@@ -30,7 +42,7 @@ export type ReactionSpec = {
 
 export const REACTIONS: Record<ReactionMode, ReactionSpec> = {
   minimal: { faces: ['curious', 'winking'], duration: 550 },
-  expressive: { faces: ['coughing', 'annoyed', 'exasperated'], duration: 850 },
+  expressive: { faces: ['coughing', 'annoyed', 'exasperated', 'smokySquint'], duration: 850 },
   dramatic: { faces: ['furiousSteam', 'dizzy'], duration: 1000 },
 };
 

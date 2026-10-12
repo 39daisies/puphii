@@ -17,7 +17,6 @@ import {
   hasProAccess,
   PaywallNotice,
   PaywallState,
-  paywallConfigIssues,
   PlanDisplay,
   storeAccountFor,
   storeNameFor,
@@ -62,7 +61,6 @@ function PaywallContent({ onClose }: { onClose: () => void }) {
   const selected = plans.find((plan) => plan.plan === state.selected) ?? null;
   const subscribed = hasProAccess(entitlement);
   const busy = state.busy !== null;
-  const issues = __DEV__ ? paywallConfigIssues() : [];
 
   return (
     <View style={styles.root}>
@@ -103,8 +101,6 @@ function PaywallContent({ onClose }: { onClose: () => void }) {
               </Card>
             ) : null}
 
-            {__DEV__ && issues.length ? <ConfigNotice issues={issues} /> : null}
-
             {subscribed ? <ActiveCard entitlement={entitlement} /> : null}
 
             {state.phase === 'loading' || state.phase === 'idle' ? (
@@ -120,34 +116,22 @@ function PaywallContent({ onClose }: { onClose: () => void }) {
                 <AppText variant="bodyStrong" align="center">
                   {state.unavailable.message}
                 </AppText>
-                {__DEV__ && state.unavailable.detail ? (
-                  <AppText variant="caption" align="center">
-                    {state.unavailable.detail}
-                  </AppText>
-                ) : null}
                 <SecondaryButton label="Try again" onPress={() => void controller.load()} disabled={busy} style={styles.retry} />
               </Card>
             ) : null}
 
             {state.phase === 'ready' && !subscribed ? (
-              <>
-                <View style={styles.plans} accessibilityRole="radiogroup" accessibilityLabel="Subscription plans">
-                  {plans.map((plan) => (
-                    <PlanCard
-                      key={plan.plan}
-                      plan={plan}
-                      selected={plan.plan === state.selected}
-                      disabled={busy}
-                      onSelect={(id) => controller.select(id)}
-                    />
-                  ))}
-                </View>
-                {selected ? (
-                  <AppText variant="caption" style={styles.disclosure}>
-                    {selected.disclosure}
-                  </AppText>
-                ) : null}
-              </>
+              <View style={styles.plans} accessibilityRole="radiogroup" accessibilityLabel="Subscription plans">
+                {plans.map((plan) => (
+                  <PlanCard
+                    key={plan.plan}
+                    plan={plan}
+                    selected={plan.plan === state.selected}
+                    disabled={busy}
+                    onSelect={(id) => controller.select(id)}
+                  />
+                ))}
+              </View>
             ) : null}
 
             {state.notice ? <Notice notice={state.notice} onDismiss={controller.dismissNotice} /> : null}
@@ -156,11 +140,14 @@ function PaywallContent({ onClose }: { onClose: () => void }) {
               <View style={styles.cta}>
                 <PrimaryButton
                   label={state.busy === 'purchasing' ? 'Processing…' : selected.cta}
-                  accessibilityLabel={state.busy === 'purchasing' ? 'Processing purchase' : `${selected.cta}, ${selected.title}, ${selected.priceLine}`}
+                  accessibilityLabel={state.busy === 'purchasing' ? 'Processing purchase' : selected.ctaAccessibilityLabel}
                   accessibilityHint={`Opens the ${STORE_NAME} purchase confirmation`}
                   disabled={busy}
                   onPress={() => void controller.purchase()}
                 />
+                <AppText variant="caption" align="center" color={colors.textMutedStrong} style={styles.disclosure}>
+                  {selected.disclosure}
+                </AppText>
               </View>
             ) : null}
 
@@ -172,21 +159,20 @@ function PaywallContent({ onClose }: { onClose: () => void }) {
               style={({ pressed }) => [styles.restore, (pressed || busy) && styles.dimmed]}
             >
               {state.busy === 'restoring' ? <ActivityIndicator color={colors.deepOcean} /> : null}
-              <AppText variant="label">{state.busy === 'restoring' ? 'Restoring…' : 'Restore Purchases'}</AppText>
+              <AppText variant="label" color={colors.textPrimaryStrong}>
+                {state.busy === 'restoring' ? 'Restoring…' : 'Restore Purchases'}
+              </AppText>
             </Pressable>
 
             <View style={styles.legal}>
               <LegalLink label="Terms of Use" url={LEGAL_URLS.termsOfUse} />
-              <AppText variant="caption" accessible={false}>
-                ·
-              </AppText>
+              {LEGAL_URLS.termsOfUse && LEGAL_URLS.privacyPolicy ? (
+                <AppText variant="caption" color={colors.textMutedStrong} accessible={false}>
+                  ·
+                </AppText>
+              ) : null}
               <LegalLink label="Privacy Policy" url={LEGAL_URLS.privacyPolicy} />
             </View>
-
-            <AppText variant="caption" align="center" style={styles.privacy}>
-              Payment is handled by {STORE_NAME}. Puphii uses RevenueCat to confirm your subscription, so RevenueCat receives your purchase
-              information, an anonymous ID and basic device details. Your puff logs stay on this device.
-            </AppText>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -205,12 +191,13 @@ function PlanCard({
   disabled: boolean;
   onSelect: (plan: PlanId) => void;
 }) {
-  const label = [plan.title, plan.priceLine, plan.monthlyEquivalent, plan.trialBadge].filter(Boolean).join(', ');
+  const ink = selected ? colors.textPrimaryStrong : colors.textPrimary;
+  const muted = selected ? colors.textMutedStrong : colors.textMuted;
   return (
     <Pressable
       accessibilityRole="radio"
       accessibilityState={{ checked: selected, disabled }}
-      accessibilityLabel={label}
+      accessibilityLabel={plan.accessibilityLabel}
       disabled={disabled}
       onPress={() => onSelect(plan.plan)}
       style={({ pressed }) => [styles.plan, selected && styles.planSelected, pressed && styles.dimmed]}
@@ -220,7 +207,7 @@ function PlanCard({
       </View>
       <View style={styles.flex}>
         <View style={styles.planTitleRow}>
-          <AppText variant="cardTitle" style={styles.planTitle}>
+          <AppText variant="cardTitle" color={ink} style={styles.planTitle}>
             {plan.title}
           </AppText>
           {plan.trialBadge ? (
@@ -231,8 +218,17 @@ function PlanCard({
             </View>
           ) : null}
         </View>
-        <AppText variant="bodyStrong">{plan.priceLine}</AppText>
-        {plan.monthlyEquivalent ? <AppText variant="caption">{plan.monthlyEquivalent}</AppText> : null}
+        <AppText variant="bodyStrong" color={ink}>
+          {plan.priceLine}
+        </AppText>
+        {plan.monthlyEquivalent ? (
+          <AppText variant="caption" color={muted}>
+            {plan.monthlyEquivalent}
+          </AppText>
+        ) : null}
+        <AppText variant="caption" color={muted}>
+          {plan.billingLine}
+        </AppText>
       </View>
     </Pressable>
   );
@@ -288,34 +284,20 @@ function LegalLink({ label, url }: { label: string; url: string | null }) {
   if (!url) {
     return (
       <View style={styles.legalLink} accessible accessibilityLabel={`${label} link not configured`}>
-        <AppText variant="caption">{label} (not configured)</AppText>
+        <AppText variant="caption" color={colors.textMutedStrong}>
+          {label} (not configured)
+        </AppText>
       </View>
     );
   }
   return (
     <Pressable accessibilityRole="link" onPress={() => Linking.openURL(url).catch(() => undefined)} style={styles.legalLink} hitSlop={4}>
-      <AppText variant="caption" color={colors.textPrimary} style={styles.underline}>
+      <AppText variant="caption" color={colors.textPrimaryStrong} style={styles.underline}>
         {label}
       </AppText>
     </Pressable>
   );
 }
-
-/** Development builds only: what still has to be supplied before release builds show this screen. */
-function ConfigNotice({ issues }: { issues: string[] }) {
-  return (
-    <View style={styles.config}>
-      <AppText variant="overline">Before release · dev builds only</AppText>
-      <AppText variant="caption">Release builds hide Puphii Pro until these are set:</AppText>
-      {issues.map((issue) => (
-        <AppText key={issue} variant="caption">
-          • {issue}
-        </AppText>
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1 },
   flex: { flex: 1 },
@@ -376,9 +358,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.white,
   },
-  radioSelected: { backgroundColor: colors.coralDeep, borderColor: colors.coralDeep },
+  radioSelected: { backgroundColor: colors.coralDeep, borderColor: colors.coralInk },
   disclosure: { lineHeight: 18 },
-  cta: { marginTop: spacing.xs },
+  cta: { marginTop: spacing.xs, gap: spacing.sm },
   restore: {
     minHeight: TOUCH_TARGET,
     flexDirection: 'row',
@@ -392,7 +374,6 @@ const styles = StyleSheet.create({
   legal: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   legalLink: { minHeight: TOUCH_TARGET, justifyContent: 'center', paddingHorizontal: spacing.xs },
   underline: { textDecorationLine: 'underline' },
-  privacy: { marginTop: -spacing.xs },
   active: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   activeMascot: { width: 56, height: 56 },
   notice: {
@@ -405,13 +386,4 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   noticeText: { flex: 1, paddingVertical: spacing.sm },
-  config: {
-    gap: spacing.xs,
-    padding: spacing.md,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.borderStrong,
-    backgroundColor: colors.surfaceGlass,
-  },
 });

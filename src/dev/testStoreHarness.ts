@@ -164,7 +164,7 @@ export function checkOffering(offerings: PurchasesOfferings, expected: ExpectedO
   if (!offering) return { ok: false, lines: [`Mismatch: ${missingOfferingMessage(offerings, expected.offeringId)}`] };
   const lines = [`OK offering: ${offering.identifier}${offering.identifier === offerings.current?.identifier ? ' (current)' : ' (loaded by identifier; not current)'}`];
   let ok = true;
-  for (const plan of ['annual', 'monthly'] as const) {
+  for (const plan of Object.keys(expected.plans) as PlanId[]) {
     const want = expected.plans[plan];
     const pkg = offering.availablePackages.find((candidate) => candidate.identifier === want.packageId);
     const result = checkPlan(plan, want, pkg, offering.identifier);

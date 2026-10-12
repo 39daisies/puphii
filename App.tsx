@@ -50,6 +50,9 @@ function AppShell() {
   // Bubble Break opens over the current tab rather than being a tab of its own.
   const [playing, setPlaying] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
+  // Held here so Pause survives tab changes; deliberately not saved between launches.
+  const [reefPaused, setReefPaused] = useState(false);
+  const toggleReef = useCallback(() => setReefPaused((paused) => !paused), []);
   const [insights, setInsights] = useState<InsightsState>(INITIAL_INSIGHTS_STATE);
   const updateInsights = useCallback((patch: Partial<InsightsState>) => setInsights((state) => ({ ...state, ...patch })), []);
 
@@ -86,6 +89,8 @@ function AppShell() {
                   setTab('insights');
                 }}
                 onOpenBubbleBreak={() => setPlaying(true)}
+                motionPaused={reefPaused}
+                onToggleMotion={toggleReef}
               />
             )}
             {tab === 'insights' && <InsightsScreen state={insights} onChange={updateInsights} />}

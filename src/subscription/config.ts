@@ -23,13 +23,14 @@ export type PlanConfig = {
   /** The package holding this plan in an offering, the same for every store. */
   packageId: string;
   /** ISO 8601 billing period, used to check the store's products match the plan. */
-  billingPeriod: 'P1Y' | 'P1M';
+  billingPeriod: 'P1Y' | 'P1M' | 'P1W';
   hasFreeTrial: boolean;
 };
 
 export const PLANS: Record<PlanId, PlanConfig> = {
   annual: { productIds: { ios: 'puphii_annual_2999', android: null }, packageId: '$rc_annual', billingPeriod: 'P1Y', hasFreeTrial: true },
   monthly: { productIds: { ios: 'puphii_monthly_499', android: null }, packageId: '$rc_monthly', billingPeriod: 'P1M', hasFreeTrial: false },
+  weekly: { productIds: { ios: 'puphii_weekly_199', android: null }, packageId: '$rc_weekly', billingPeriod: 'P1W', hasFreeTrial: false },
 };
 
 /**
@@ -54,7 +55,7 @@ export const LEGAL_URLS: { termsOfUse: string | null; privacyPolicy: string | nu
 export const PRO_BENEFITS: readonly string[] | null = null;
 
 /** RevenueCat Test Store products. Never mixed into the App Store or Google Play IDs above. */
-export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly_2999', monthly: 'monthly_499' };
+export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly_2999', monthly: 'monthly_499', weekly: 'weekly_199' };
 
 /**
  * Each plan's product ID for the store the SDK key belongs to. A `testStore` key is only ever
@@ -62,5 +63,9 @@ export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly_
  */
 export function productIdsFor(source: KeySource, platform: StorePlatform): Record<PlanId, string | null> {
   if (source === 'testStore') return { ...TEST_STORE_PRODUCT_IDS };
-  return { annual: PLANS.annual.productIds[platform], monthly: PLANS.monthly.productIds[platform] };
+  return {
+    annual: PLANS.annual.productIds[platform],
+    monthly: PLANS.monthly.productIds[platform],
+    weekly: PLANS.weekly.productIds[platform],
+  };
 }

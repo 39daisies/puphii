@@ -7,6 +7,7 @@ import { ReactionMode } from '../data/types';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 import { colors } from '../theme';
 import { FaceName, FACES, REACTIONS } from './faces';
+import { createReactionTimer } from './reactionTimer';
 
 export type MascotHandle = {
   react: (mode: ReactionMode) => void;
@@ -18,6 +19,8 @@ export type MascotHandle = {
 type Props = {
   size: number;
   ref?: React.Ref<MascotHandle>;
+  /** Drawn instead of the idle face while Puphii isn't reacting, in the same size × size box. */
+  idle?: React.ReactNode;
 };
 
 type Effect = { mode: ReactionMode | 'relief'; id: number } | null;
@@ -26,7 +29,7 @@ const FACE_NAMES = Object.keys(FACES) as FaceName[];
 const RELIEF_DURATION = 700;
 const CHEER_DURATION = 600;
 
-export function Mascot({ size, ref }: Props) {
+export function Mascot({ size, ref, idle }: Props) {
   const reduceMotion = useReducedMotion();
   const [face, setFace] = useState<FaceName>('idle');
   const [effect, setEffect] = useState<Effect>(null);
@@ -35,19 +38,13 @@ export function Mascot({ size, ref }: Props) {
   const shake = useRef(new Animated.Value(0)).current;
   const tilt = useRef(new Animated.Value(0)).current;
   const fx = useRef(new Animated.Value(0)).current;
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [timer] = useState(createReactionTimer);
   const step = useRef(0);
 
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-    },
-    [],
-  );
+  useEffect(() => timer.cancel, [timer]);
 
   // Every call restarts from rest: a new tap interrupts the old reaction instead of queueing.
   const restart = (nextFace: FaceName, nextEffect: Effect, duration: number, motion: Animated.CompositeAnimation | null) => {
-    if (timer.current) clearTimeout(timer.current);
     for (const value of [scale, shake, tilt, fx]) value.stopAnimation();
     scale.setValue(1);
     shake.setValue(0);
@@ -61,11 +58,10 @@ export function Mascot({ size, ref }: Props) {
         Animated.timing(fx, { toValue: 1, duration, easing: Easing.linear, useNativeDriver: true }),
       ]).start();
     }
-    timer.current = setTimeout(() => {
+    timer.restart(duration, () => {
       setFace('idle');
       setEffect(null);
-      timer.current = null;
-    }, duration);
+    });
   };
 
   useImperativeHandle(ref, () => ({
@@ -135,15 +131,22 @@ export function Mascot({ size, ref }: Props) {
         accessibilityLabel={`Puphii the pufferfish${face === 'idle' ? '' : ', reacting'}`}
         style={{ width: size, height: size, transform: [{ translateX }, { rotate }, { scale }] }}
       >
-        {FACE_NAMES.map((name) => (
-          <Image
-            key={name}
-            source={FACES[name]}
-            resizeMode="contain"
-            fadeDuration={0}
-            style={[StyleSheet.absoluteFill, { width: size, height: size, opacity: name === face ? 1 : 0 }]}
-          />
-        ))}
+        {FACE_NAMES.map((name) =>
+          name === 'idle' && idle ? null : (
+            <Image
+              key={name}
+              source={FACES[name]}
+              resizeMode="contain"
+              fadeDuration={0}
+              style={[StyleSheet.absoluteFill, { width: size, height: size, opacity: name === face ? 1 : 0 }]}
+            />
+          ),
+        )}
+        {idle ? (
+          <View style={[StyleSheet.absoluteFill, { opacity: face === 'idle' ? 1 : 0 }]} pointerEvents="none">
+            {idle}
+          </View>
+        ) : null}
       </Animated.View>
 
       {mode === 'minimal' && (

@@ -5,6 +5,7 @@ import Purchases from 'react-native-purchases';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { REVENUECAT_ENTITLEMENT_ID, SUBSCRIPTION_GATING_ENABLED } from '../subscription/config';
 import { useEntitlement } from '../subscription/EntitlementProvider';
+import { paywallConfigIssues } from '../subscription/paywall';
 import { KEY_MESSAGES } from '../subscription/revenueCat';
 import { appSdkKey, hasNativeStore } from '../subscription/revenueCatSdk';
 import { colors, spacing } from '../theme';
@@ -53,10 +54,14 @@ export function TestStoreHarnessHost() {
 
 /** Temporary shortcut for when the development menu can't be opened. */
 export function TestStoreHarnessButton() {
+  const missing = paywallConfigIssues().length;
   return (
     <View style={styles.devEntry}>
       <Text style={styles.devEntryLabel}>DEV ONLY · not in release builds</Text>
       <HarnessButton label="Open RevenueCat Test Store" disabled={false} onPress={openRequests.request} />
+      <Text style={styles.muted}>
+        {missing ? `Puphii Pro release check: ${missing} item${missing === 1 ? '' : 's'} missing. Details inside.` : 'Puphii Pro release check: ready.'}
+      </Text>
       {hasNativeStore ? null : (
         <Text style={styles.muted}>This is Expo Go, which has no store connection. Open the Puphii development build instead.</Text>
       )}
@@ -129,6 +134,8 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
         <Text style={styles.note}>{SCREEN_NOTE[store]}</Text>
 
         <ScrollView contentContainerStyle={styles.content}>
+          <ReleaseReadiness />
+
           <Section title="Subscription status (from RevenueCat)">
             {describeEntitlement(entitlement, { testStore: usingTestStore }).map((line) => (
               <Text key={line} style={styles.body}>
@@ -239,6 +246,27 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
         </ScrollView>
       </SafeAreaView>
     </Modal>
+  );
+}
+
+/** What still has to be supplied before release builds offer Puphii Pro on the You screen. */
+function ReleaseReadiness() {
+  const issues = paywallConfigIssues();
+  return (
+    <Section title="Before release · Puphii Pro">
+      {issues.length ? (
+        <>
+          <Text style={styles.body}>Release builds hide Puphii Pro until these are set:</Text>
+          {issues.map((issue) => (
+            <Text key={issue} style={[styles.body, styles.errorText]}>
+              • {issue}
+            </Text>
+          ))}
+        </>
+      ) : (
+        <Text style={styles.body}>Legal links and Pro benefits are set. Release builds show Puphii Pro.</Text>
+      )}
+    </Section>
   );
 }
 

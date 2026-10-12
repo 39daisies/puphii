@@ -25,5 +25,12 @@ export const TEST_STORE_EXPECTED: ExpectedOffering = {
       price: { amount: 4.99, currencyCode: 'USD' },
       freeTrialDays: null,
     },
+    weekly: {
+      packageId: PLANS.weekly.packageId,
+      productId: TEST_STORE_PRODUCT_IDS.weekly,
+      billingPeriod: PLANS.weekly.billingPeriod,
+      price: { amount: 1.99, currencyCode: 'USD' },
+      freeTrialDays: null,
+    },
   },
 };

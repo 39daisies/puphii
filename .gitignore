@@ -5,6 +5,8 @@ web-build/
 *.log
 .DS_Store
 .test-build/
+/ios
+/android
 .env
 .env*.local
 # Apple signing and App Store Connect keys

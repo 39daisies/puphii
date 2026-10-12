@@ -14,7 +14,9 @@ export const palette = {
 /**
  * Semantic colors. Derived shades exist only where the palette value cannot meet
  * WCAG contrast on its own: `coralDeep` carries white bold button text (>= 3:1),
- * `coralInk` is coral-family text on cream/peach (>= 4.5:1).
+ * `coralInk` is coral-family text on cream/peach (>= 4.5:1) and rings the selected radio on peach
+ * (>= 3:1). `textPrimaryStrong` and `textMutedStrong` replace `textPrimary`/`textMuted` on peach and
+ * over every color of the reef backdrop, including seafoam and coral pink (>= 4.5:1).
  */
 export const colors = {
   ...palette,
@@ -23,6 +25,8 @@ export const colors = {
   coralInk: '#A8402F',
   textPrimary: palette.deepOcean,
   textMuted: '#4A7489',
+  textPrimaryStrong: '#0F4F6D',
+  textMutedStrong: '#2F5568',
   textOnCoral: '#FFFFFF',
   white: '#FFFFFF',
   surface: palette.warmCream,

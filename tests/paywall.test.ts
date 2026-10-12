@@ -19,6 +19,7 @@ import {
   describePlan,
   freeTrialLength,
   hasProAccess,
+  NO_INTRO_OFFER_PLANS,
   PaywallSdk,
   paywallConfigIssues,
   proStatusLabel,
@@ -37,6 +38,7 @@ const rc = require('@revenuecat/purchases-typescript-internal');
 
 const ROOT = join(__dirname, '..', '..');
 const read = (...path: string[]) => readFileSync(join(ROOT, ...path), 'utf8');
+const occurrences = (text: string, part: string) => text.split(part).length - 1;
 
 const APPLE = productIdsFor('platform', 'ios');
 const TEST_STORE = productIdsFor('testStore', 'ios');
@@ -56,7 +58,7 @@ function pkg(
 ): PurchasesPackage {
   return {
     identifier,
-    packageType: identifier === '$rc_annual' ? 'ANNUAL' : 'MONTHLY',
+    packageType: ({ $rc_annual: 'ANNUAL', $rc_monthly: 'MONTHLY', $rc_weekly: 'WEEKLY' } as Record<string, string>)[identifier] ?? 'CUSTOM',
     product: {
       identifier: productId,
       title: `Title ${productId}`,
@@ -79,12 +81,16 @@ function offerings(current: string | null, all: Record<string, PurchasesPackage[
 const appleV2 = (annualIntro: object | null = DAY_TRIAL) => [
   pkg('$rc_annual', 'puphii_annual_2999', '$29.99', 'P1Y', { intro: annualIntro, perMonth: '$2.49' }),
   pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M'),
+  pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { perMonth: '$7.96' }),
 ];
 /** `default_v2` as the Test Store sees it. */
 const testStoreV2 = () => [
   pkg('$rc_annual', 'yearly_2999', '$29.99', 'P1Y', { intro: DAY_TRIAL, perMonth: '$2.49' }),
   pkg('$rc_monthly', 'monthly_499', '$4.99', 'P1M'),
+  pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1W'),
 ];
+/** `default_v2` as the App Store sees it, with a different weekly package in place of the real one, or none. */
+const appleWithWeekly = (weekly: PurchasesPackage | null) => [...appleV2().slice(0, 2), ...(weekly ? [weekly] : [])];
 /** The original offering, still current in RevenueCat, with other products. */
 const ORIGINAL = [pkg('$rc_annual', 'yearly', '$29.99', 'P1Y'), pkg('$rc_monthly', 'monthly', '$4.99', 'P1M')];
 const dashboard = (v2: PurchasesPackage[] = appleV2()) => offerings('default', { default: ORIGINAL, default_v2: v2 });
@@ -181,9 +187,11 @@ const planIds = (plans: { plan: PlanId }[]) => plans.map((p) => p.plan);
 
 describe('Apple product to package mapping', () => {
   test('the App Store products and packages are the configured ones', () => {
-    assert.deepEqual(APPLE, { annual: 'puphii_annual_2999', monthly: 'puphii_monthly_499' });
+    assert.deepEqual(APPLE, { annual: 'puphii_annual_2999', monthly: 'puphii_monthly_499', weekly: 'puphii_weekly_199' });
     assert.equal(PLANS.annual.packageId, '$rc_annual');
     assert.equal(PLANS.monthly.packageId, '$rc_monthly');
+    assert.equal(PLANS.weekly.packageId, '$rc_weekly');
+    assert.equal(rc.PACKAGE_TYPE.WEEKLY, 'WEEKLY');
     assert.equal(PAYWALL_OFFERING_ID, 'default_v2');
     assert.equal(REVENUECAT_ENTITLEMENT_ID, 'puphii_pro');
   });
@@ -197,6 +205,7 @@ describe('Apple product to package mapping', () => {
       [
         ['annual', '$rc_annual', 'puphii_annual_2999'],
         ['monthly', '$rc_monthly', 'puphii_monthly_499'],
+        ['weekly', '$rc_weekly', 'puphii_weekly_199'],
       ],
     );
   });
@@ -207,11 +216,33 @@ describe('Apple product to package mapping', () => {
     assert.equal(resolution.offeringId, 'launch');
   });
 
-  test('an offering with both plans wins over a current offering with only one', () => {
-    const resolution = resolvePaywallOffering(offerings('default', { default: [appleV2()[1]], default_v2: appleV2() }), APPLE);
+  test('the offering with the most verified plans wins; on a tie, the current one', () => {
+    const fewer = resolvePaywallOffering(offerings('default', { default: [appleV2()[1]], default_v2: appleV2() }), APPLE);
+    assert.ok(fewer.ok);
+    assert.equal(fewer.offeringId, 'default_v2');
+    assert.deepEqual(planIds(fewer.plans), ['annual', 'monthly', 'weekly']);
+
+    const withoutWeekly = resolvePaywallOffering(offerings('default', { default: appleWithWeekly(null), default_v2: appleV2() }), APPLE);
+    assert.ok(withoutWeekly.ok);
+    assert.equal(withoutWeekly.offeringId, 'default_v2', 'a current offering missing weekly loses to one that has it');
+
+    const partialFallback = resolvePaywallOffering(
+      offerings('default', { default: [appleV2()[1]], default_v2: appleWithWeekly(null) }),
+      APPLE,
+    );
+    assert.ok(partialFallback.ok);
+    assert.equal(partialFallback.offeringId, 'default_v2', 'annual and monthly beat monthly alone');
+
+    const tie = resolvePaywallOffering(offerings('launch', { launch: appleWithWeekly(null), default_v2: appleWithWeekly(null) }), APPLE);
+    assert.ok(tie.ok);
+    assert.equal(tie.offeringId, 'launch');
+  });
+
+  test('plans are offered as Annual, Monthly, Weekly, whatever order the offering lists them in', () => {
+    const reversed = [...appleV2()].reverse();
+    const resolution = resolvePaywallOffering(offerings('default_v2', { default_v2: reversed }), APPLE);
     assert.ok(resolution.ok);
-    assert.equal(resolution.offeringId, 'default_v2');
-    assert.deepEqual(planIds(resolution.plans), ['annual', 'monthly']);
+    assert.deepEqual(planIds(resolution.plans), ['annual', 'monthly', 'weekly']);
   });
 
   test('Test Store products are never offered on the App Store, and the reverse', () => {
@@ -227,6 +258,45 @@ describe('Apple product to package mapping', () => {
     assert.deepEqual(planIds(verifiedPlans(offering([appleV2()[1]]), APPLE)), ['monthly']);
   });
 
+  test('a missing or invalid weekly package leaves Annual and Monthly on offer', () => {
+    const invalid: [string, PurchasesPackage | null][] = [
+      ['missing', null],
+      ['wrong product', pkg('$rc_weekly', 'puphii_monthly_499', '$4.99', 'P1W')],
+      ['Test Store product', pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1W')],
+      ['monthly period', pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1M')],
+      ['no period', pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', null)],
+      ['custom package', pkg('$rc_custom_weekly', 'puphii_weekly_199', '$1.99', 'P1W')],
+      ['free trial in days', pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { intro: DAY_TRIAL })],
+      ['free trial in weeks', pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { intro: WEEK_TRIAL })],
+      ['paid intro offer', pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { intro: PAID_INTRO })],
+    ];
+    for (const [name, weekly] of invalid) {
+      const resolution = resolvePaywallOffering(dashboard(appleWithWeekly(weekly)), APPLE);
+      assert.ok(resolution.ok, name);
+      assert.equal(resolution.offeringId, 'default_v2', name);
+      assert.deepEqual(planIds(resolution.plans), ['annual', 'monthly'], name);
+    }
+  });
+
+  test('a monthly product with an introductory offer is still offered; only weekly must have none', () => {
+    assert.deepEqual(NO_INTRO_OFFER_PLANS, ['weekly']);
+    const [annual, , weekly] = appleV2();
+    for (const intro of [DAY_TRIAL, WEEK_TRIAL, PAID_INTRO]) {
+      const monthly = pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro });
+      const resolution = resolvePaywallOffering(dashboard([annual, monthly, weekly]), APPLE);
+      assert.ok(resolution.ok);
+      assert.deepEqual(planIds(resolution.plans), ['annual', 'monthly', 'weekly'], JSON.stringify(intro));
+      assert.equal(resolution.plans[1].pkg, monthly);
+    }
+  });
+
+  test('Test Store weekly products are never offered on the App Store, and the reverse', () => {
+    const weeklyOnly = (packages: PurchasesPackage[]) => ({ identifier: 'default_v2', availablePackages: [packages[2]] }) as never;
+    assert.deepEqual(verifiedPlans(weeklyOnly(testStoreV2()), APPLE), []);
+    assert.deepEqual(verifiedPlans(weeklyOnly(appleV2()), TEST_STORE), []);
+    assert.deepEqual(planIds(verifiedPlans(weeklyOnly(testStoreV2()), TEST_STORE)), ['weekly']);
+  });
+
   test('missing offerings or products explain what was expected without offering anything', () => {
     for (const response of [offerings(null, {}), offerings('default', { default: ORIGINAL }), dashboard([])]) {
       const resolution = resolvePaywallOffering(response, APPLE);
@@ -234,48 +304,119 @@ describe('Apple product to package mapping', () => {
       if (!resolution.ok) {
         assert.match(resolution.detail, /\$rc_annual → puphii_annual_2999/);
         assert.match(resolution.detail, /\$rc_monthly → puphii_monthly_499/);
+        assert.match(resolution.detail, /\$rc_weekly → puphii_weekly_199/);
       }
     }
   });
 
   test('a store with no configured products is never offered anything', () => {
     const android = productIdsFor('platform', 'android');
-    assert.deepEqual(android, { annual: null, monthly: null });
+    assert.deepEqual(android, { annual: null, monthly: null, weekly: null });
     assert.equal(resolvePaywallOffering(dashboard(), android).ok, false);
   });
 });
 
 describe('price and trial text come only from store metadata', () => {
   const resolved = resolvePaywallOffering(dashboard(), APPLE);
-  const [annual, monthly] = resolved.ok ? resolved.plans : [];
+  const [annual, monthly, weekly] = resolved.ok ? resolved.plans : [];
 
   test('prices are the localized strings the store reports', () => {
     const yen = { plan: 'annual' as const, pkg: pkg('$rc_annual', 'puphii_annual_2999', '¥4,500', 'P1Y', { perMonth: '¥375' }) };
     const display = describePlan(yen, 'ineligible', 'ios');
     assert.equal(display.price, '¥4,500');
     assert.equal(display.priceLine, '¥4,500 / year');
-    assert.equal(display.monthlyEquivalent, '¥375 per month, billed yearly');
+    assert.equal(display.monthlyEquivalent, 'About ¥375 per month');
+    assert.equal(display.billingLine, 'Renews every year until you cancel.');
     assert.match(display.disclosure, /¥4,500 per year/);
-    assert.ok(!display.disclosure.includes('$'));
+    assert.equal(display.accessibilityLabel, 'Yearly plan. ¥4,500 per year, about ¥375 per month. Renews every year until you cancel.');
+    assert.ok(![display.disclosure, display.accessibilityLabel, display.ctaAccessibilityLabel].join(' ').includes('$'));
     assert.equal(describePlan(monthly, 'unknown', 'ios').priceLine, '$4.99 / month');
     assert.equal(describePlan(monthly, 'unknown', 'ios').monthlyEquivalent, null);
+    assert.equal(describePlan(monthly, 'unknown', 'ios').billingLine, 'Renews every month until you cancel.');
+
+    const yenWeekly = describePlan({ plan: 'weekly', pkg: pkg('$rc_weekly', 'puphii_weekly_199', '¥300', 'P1W') }, 'unknown', 'ios');
+    assert.equal(yenWeekly.priceLine, '¥300 / week');
+    assert.equal(yenWeekly.billingLine, 'Renews every week until you cancel.');
+    assert.match(yenWeekly.disclosure, /^¥300 per week/);
+    assert.equal(yenWeekly.accessibilityLabel, 'Weekly plan. ¥300 per week. Renews every week until you cancel.');
+    assert.ok(![yenWeekly.priceLine, yenWeekly.disclosure, yenWeekly.accessibilityLabel].join(' ').includes('$'));
+  });
+
+  test('the weekly plan states that it is charged every week and renews until cancelled', () => {
+    const display = describePlan(weekly, 'unknown', 'ios');
+    assert.equal(display.title, 'Weekly');
+    assert.equal(display.price, '$1.99');
+    assert.equal(display.priceLine, '$1.99 / week');
+    assert.equal(display.billingLine, 'Renews every week until you cancel.');
+    assert.equal(
+      display.disclosure,
+      '$1.99 per week, charged to your Apple Account when you confirm. Renews automatically every week unless cancelled at least 24 hours before the current period ends. Cancel anytime in your Apple Account settings.',
+    );
+    assert.equal(display.monthlyEquivalent, null, 'no approximate per-month figure for a weekly plan, even when the SDK has one');
+    assert.equal(display.cta, 'Subscribe');
+  });
+
+  test('the weekly plan never claims a free trial, whatever the store or RevenueCat reports', () => {
+    const withIntro = (intro: object) => ({ plan: 'weekly' as const, pkg: pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { intro }) });
+    for (const plan of [weekly, withIntro(DAY_TRIAL), withIntro(WEEK_TRIAL), withIntro(PAID_INTRO)]) {
+      for (const eligibility of ['eligible', 'ineligible', 'unknown'] as const) {
+        const display = describePlan(plan, eligibility, 'ios');
+        assert.equal(display.trialBadge, null, eligibility);
+        assert.equal(display.cta, 'Subscribe', eligibility);
+        const shown = [display.billingLine, display.disclosure, display.priceLine, display.accessibilityLabel, display.ctaAccessibilityLabel];
+        assert.ok(!/free|trial|introductory/i.test(shown.join(' ')), eligibility);
+      }
+    }
+  });
+
+  test('a monthly introductory offer is described from store data, as before weekly support', () => {
+    const freeMonthly = { plan: 'monthly' as const, pkg: pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro: DAY_TRIAL }) };
+    const eligible = describePlan(freeMonthly, 'eligible', 'ios');
+    assert.equal(eligible.trialBadge, '7-day free trial');
+    assert.equal(eligible.cta, 'Start free trial');
+    assert.match(eligible.disclosure, /^Free for 7 days, then \$4\.99 per month, charged to your Apple Account when the trial ends/);
+    assert.equal(eligible.billingLine, 'After the free trial, renews every month until you cancel.');
+    assert.equal(eligible.accessibilityLabel, 'Monthly plan. 7-day free trial, then $4.99 per month. Renews every month until you cancel.');
+    const unknown = describePlan(freeMonthly, 'unknown', 'ios');
+    assert.equal(unknown.trialBadge, null);
+    assert.match(unknown.disclosure, /If you qualify for an introductory offer, Apple shows it before you confirm/);
+    const ineligible = describePlan(freeMonthly, 'ineligible', 'ios');
+    assert.equal(ineligible.trialBadge, null);
+    assert.ok(!/free/i.test(ineligible.disclosure + ineligible.billingLine));
+
+    const paidMonthly = { plan: 'monthly' as const, pkg: pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro: PAID_INTRO }) };
+    const paid = describePlan(paidMonthly, 'eligible', 'ios');
+    assert.equal(paid.trialBadge, null, 'a paid introductory offer is never called a free trial');
+    assert.equal(paid.cta, 'Subscribe');
+  });
+
+  test('the annual billing line mentions the trial only when it is claimed', () => {
+    assert.equal(describePlan(annual, 'eligible', 'ios').billingLine, 'After the free trial, renews every year until you cancel.');
+    for (const eligibility of ['ineligible', 'unknown'] as const) {
+      assert.equal(describePlan(annual, eligibility, 'ios').billingLine, 'Renews every year until you cancel.', eligibility);
+    }
   });
 
   test('the trial is claimed only when the product offers it free and RevenueCat confirms eligibility', () => {
     const eligible = describePlan(annual, 'eligible', 'ios');
     assert.equal(eligible.trialBadge, '7-day free trial');
     assert.equal(eligible.cta, 'Start free trial');
-    assert.match(eligible.disclosure, /^Free for 7 days, then \$29\.99 per year\./);
-    assert.match(eligible.disclosure, /charged \$29\.99 when the trial ends/);
+    assert.equal(
+      eligible.disclosure,
+      'Free for 7 days, then $29.99 per year, charged to your Apple Account when the trial ends. Renews automatically every year unless cancelled at least 24 hours before the trial or current period ends. Cancel anytime in your Apple Account settings.',
+    );
 
     for (const eligibility of ['ineligible', 'unknown'] as const) {
       const display = describePlan(annual, eligibility, 'ios');
       assert.equal(display.trialBadge, null, eligibility);
       assert.equal(display.cta, 'Subscribe', eligibility);
-      assert.ok(!/free/i.test(display.disclosure), eligibility);
+      assert.ok(!/free|trial/i.test(display.disclosure + display.ctaAccessibilityLabel + display.accessibilityLabel), eligibility);
     }
-    assert.match(describePlan(annual, 'ineligible', 'ios').disclosure, /charged to your Apple Account when you confirm/);
-    assert.match(describePlan(annual, 'unknown', 'ios').disclosure, /If you qualify for an introductory offer, the store shows it before you confirm/);
+    assert.equal(
+      describePlan(annual, 'ineligible', 'ios').disclosure,
+      '$29.99 per year, charged to your Apple Account when you confirm. Renews automatically every year unless cancelled at least 24 hours before the current period ends. Cancel anytime in your Apple Account settings.',
+    );
+    assert.match(describePlan(annual, 'unknown', 'ios').disclosure, /If you qualify for an introductory offer, Apple shows it before you confirm/);
   });
 
   test('no intro offer or a paid intro offer is never shown as a free trial', () => {
@@ -297,12 +438,66 @@ describe('price and trial text come only from store metadata', () => {
   });
 
   test('every disclosure states the billing period, auto-renewal and how to cancel', () => {
-    for (const display of [describePlan(annual, 'eligible', 'ios'), describePlan(annual, 'ineligible', 'ios'), describePlan(monthly, 'unknown', 'ios')]) {
-      assert.match(display.disclosure, /renews automatically every (year|month)/);
-      assert.match(display.disclosure, /at least 24 hours before the end of the current period/);
-      assert.match(display.disclosure, /Manage or cancel it anytime in your Apple Account settings/);
+    for (const display of [
+      describePlan(annual, 'eligible', 'ios'),
+      describePlan(annual, 'ineligible', 'ios'),
+      describePlan(monthly, 'unknown', 'ios'),
+      describePlan(weekly, 'unknown', 'ios'),
+    ]) {
+      assert.match(display.disclosure, /Renews automatically every (year|month|week)/);
+      assert.match(display.disclosure, /unless cancelled at least 24 hours before the (trial or )?current period ends/);
+      assert.match(display.disclosure, /Cancel anytime in your Apple Account settings\.$/);
+      assert.match(display.disclosure, /charged to your Apple Account/);
     }
     assert.match(describePlan(monthly, 'unknown', 'android').disclosure, /Google Account/);
+    assert.match(describePlan(weekly, 'unknown', 'android').disclosure, /Google Account/);
+  });
+
+  test('the disclosure stays short: at most four sentences and 45 words', () => {
+    for (const display of everyDisplay()) {
+      const sentences = display.disclosure.split(/(?<=\.) /).length;
+      assert.ok(sentences <= 4, `${display.plan}: ${sentences} sentences`);
+      assert.ok(display.disclosure.split(' ').length <= 45, `${display.plan}: ${display.disclosure}`);
+    }
+  });
+
+  const everyDisplay = () =>
+    [annual, monthly, weekly].flatMap((plan) => (['eligible', 'ineligible', 'unknown'] as const).map((eligibility) => describePlan(plan, eligibility, 'ios')));
+
+  test('the card states the price once, and the selected plan terms state it once more', () => {
+    for (const display of everyDisplay()) {
+      const card = [display.title, display.trialBadge ?? '', display.priceLine, display.monthlyEquivalent ?? '', display.billingLine].join(' ');
+      assert.equal(occurrences(card, display.price), 1, `${display.plan} card`);
+      assert.equal(occurrences(display.disclosure, display.price), 1, `${display.plan} disclosure`);
+      assert.match(display.billingLine, new RegExp(`renews every ${display.priceLine.split(' / ')[1]} until you cancel\\.$`, 'i'));
+    }
+  });
+
+  test('each plan card is announced with its price, period, any claimed trial and renewal, each once', () => {
+    assert.deepEqual(
+      [describePlan(annual, 'eligible', 'ios'), describePlan(annual, 'ineligible', 'ios'), describePlan(monthly, 'unknown', 'ios'), describePlan(weekly, 'unknown', 'ios')].map(
+        (display) => display.accessibilityLabel,
+      ),
+      [
+        'Yearly plan. 7-day free trial, then $29.99 per year, about $2.49 per month. Renews every year until you cancel.',
+        'Yearly plan. $29.99 per year, about $2.49 per month. Renews every year until you cancel.',
+        'Monthly plan. $4.99 per month. Renews every month until you cancel.',
+        'Weekly plan. $1.99 per week. Renews every week until you cancel.',
+      ],
+    );
+    for (const display of everyDisplay()) {
+      assert.equal(occurrences(display.accessibilityLabel, display.price), 1, display.plan);
+      assert.ok(!display.accessibilityLabel.includes(' / '), 'no "slash" read aloud');
+      assert.equal(occurrences(display.accessibilityLabel, 'free trial'), display.trialBadge ? 1 : 0, display.plan);
+      assert.equal(occurrences(display.accessibilityLabel, 'Renews every'), 1, display.plan);
+    }
+  });
+
+  test('the purchase button names the action, plan and price without repeating the trial', () => {
+    assert.equal(describePlan(annual, 'eligible', 'ios').ctaAccessibilityLabel, 'Start free trial, Yearly plan, then $29.99 per year');
+    assert.equal(describePlan(annual, 'ineligible', 'ios').ctaAccessibilityLabel, 'Subscribe, Yearly plan, $29.99 per year');
+    assert.equal(describePlan(monthly, 'unknown', 'ios').ctaAccessibilityLabel, 'Subscribe, Monthly plan, $4.99 per month');
+    assert.equal(describePlan(weekly, 'eligible', 'ios').ctaAccessibilityLabel, 'Subscribe, Weekly plan, $1.99 per week');
   });
 
   test('each platform names its own store', () => {
@@ -338,10 +533,48 @@ describe('paywall controller', () => {
     const state = controller.current();
     assert.equal(state.phase, 'ready');
     assert.equal(state.offeringId, 'default_v2');
-    assert.deepEqual(planIds(state.plans), ['annual', 'monthly']);
+    assert.deepEqual(planIds(state.plans), ['annual', 'monthly', 'weekly']);
     assert.equal(state.selected, 'annual');
     assert.deepEqual(calls.eligibility, [['puphii_annual_2999']], 'eligibility is only checked for products with a free trial');
     assert.deepEqual(state.trial, { annual: 'eligible' });
+  });
+
+  test('without a usable weekly package the paywall still loads Annual and Monthly, with Annual selected', async () => {
+    for (const weekly of [null, pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1W'), pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { intro: DAY_TRIAL })]) {
+      const { controller, control, calls } = fakes();
+      control.offerings = () => Promise.resolve(dashboard(appleWithWeekly(weekly)));
+      await controller.load();
+      const state = controller.current();
+      assert.equal(state.phase, 'ready');
+      assert.deepEqual(planIds(state.plans), ['annual', 'monthly']);
+      assert.equal(state.selected, 'annual');
+      assert.deepEqual(calls.eligibility, [['puphii_annual_2999']]);
+      controller.select('weekly');
+      assert.equal(controller.current().selected, 'annual', 'a plan that is not offered cannot be selected');
+    }
+  });
+
+  test('a monthly free trial keeps monthly on offer and has its eligibility checked; weekly is never checked', async () => {
+    const { controller, control, calls } = fakes();
+    const [annual, , weekly] = appleV2();
+    control.offerings = () => Promise.resolve(dashboard([annual, pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro: DAY_TRIAL }), weekly]));
+    await controller.load();
+    const state = controller.current();
+    assert.equal(state.phase, 'ready');
+    assert.deepEqual(planIds(state.plans), ['annual', 'monthly', 'weekly']);
+    assert.equal(state.selected, 'annual');
+    assert.deepEqual(calls.eligibility, [['puphii_annual_2999', 'puphii_monthly_499']]);
+    assert.deepEqual(state.trial, { annual: 'eligible', monthly: 'eligible' });
+  });
+
+  test('the weekly plan can be selected and bought, and only its own product is purchased', async () => {
+    const { controller, calls } = fakes();
+    await controller.load();
+    controller.select('weekly');
+    assert.equal(controller.current().selected, 'weekly');
+    assert.equal(await controller.purchase(), 'purchased');
+    assert.deepEqual(calls.purchase, ['puphii_weekly_199']);
+    assert.equal(calls.refresh, 1);
   });
 
   test('a failed eligibility check means no trial is claimed', async () => {
@@ -534,8 +767,8 @@ describe('paywall controller', () => {
 
 describe('Test Store configuration is preserved', () => {
   test('the Test Store products are unchanged and stay separate from the App Store ones', () => {
-    assert.deepEqual(TEST_STORE_PRODUCT_IDS, { annual: 'yearly_2999', monthly: 'monthly_499' });
-    assert.deepEqual(TEST_STORE, { annual: 'yearly_2999', monthly: 'monthly_499' });
+    assert.deepEqual(TEST_STORE_PRODUCT_IDS, { annual: 'yearly_2999', monthly: 'monthly_499', weekly: 'weekly_199' });
+    assert.deepEqual(TEST_STORE, { annual: 'yearly_2999', monthly: 'monthly_499', weekly: 'weekly_199' });
     for (const id of Object.values(TEST_STORE)) assert.ok(!Object.values(APPLE).includes(id));
   });
 
@@ -546,7 +779,7 @@ describe('Test Store configuration is preserved', () => {
     assert.equal(controller.current().phase, 'ready');
     assert.deepEqual(
       controller.current().plans.map((p) => p.pkg.product.identifier),
-      ['yearly_2999', 'monthly_499'],
+      ['yearly_2999', 'monthly_499', 'weekly_199'],
     );
     await controller.purchase();
     assert.deepEqual(calls.purchase, ['yearly_2999']);
@@ -629,6 +862,23 @@ describe('release configuration', () => {
     ]);
   });
 
+  test('release-readiness checks live in the developer tools, not on the paywall', () => {
+    const screen = read('src', 'screens', 'PaywallScreen.tsx');
+    assert.ok(!/paywallConfigIssues|ConfigNotice|Before release|__DEV__|\.detail\b/.test(screen));
+    assert.ok(!/LEGAL_URLS\.\w+ in|PRO_BENEFITS in|src\/|config\.ts|RevenueCat/.test(screen.replace(/^import .*$/gm, '')), 'no code paths or SDK names shown');
+    const tools = read('src', 'dev', 'TestStoreHarness.tsx');
+    assert.match(tools, /function ReleaseReadiness\(\)/);
+    assert.match(tools, /const issues = paywallConfigIssues\(\);/);
+    assert.match(tools, /Release builds hide Puphii Pro until these are set:/);
+    assert.match(tools, /<ReleaseReadiness \/>/);
+  });
+
+  test('the subscription terms sit directly under the purchase button', () => {
+    const screen = read('src', 'screens', 'PaywallScreen.tsx');
+    assert.match(screen, /onPress=\{\(\) => void controller\.purchase\(\)\}\s*\/>\s*<AppText[^>]*style=\{styles\.disclosure\}>\s*\{selected\.disclosure\}/);
+    assert.ok(!/anonymous/i.test(screen), 'the data-processing explanation lives in the Privacy Policy');
+  });
+
   test('the paywall logs nothing and validates no receipts itself', () => {
     for (const file of [read('src', 'subscription', 'paywall.ts'), read('src', 'screens', 'PaywallScreen.tsx')]) {
       assert.ok(!/console\./.test(file));
@@ -639,8 +889,117 @@ describe('release configuration', () => {
 
   test('the paywall shows restore, legal links, a close action and the store disclosure', () => {
     const screen = read('src', 'screens', 'PaywallScreen.tsx');
-    for (const text of ['Restore Purchases', 'Terms of Use', 'Privacy Policy', 'Close Puphii Pro', 'selected.disclosure', 'Loading subscription options', 'Try again']) {
+    for (const text of [
+      'Restore Purchases',
+      'Terms of Use',
+      'Privacy Policy',
+      'Close Puphii Pro',
+      'selected.disclosure',
+      '{plan.billingLine}',
+      'accessibilityLabel={plan.accessibilityLabel}',
+      'selected.ctaAccessibilityLabel',
+      'Loading subscription options',
+      'Try again',
+    ]) {
       assert.ok(screen.includes(text), text);
     }
+  });
+
+  test('plan cards and the disclosure wrap and scroll instead of truncating', () => {
+    const screen = read('src', 'screens', 'PaywallScreen.tsx');
+    assert.ok(!/numberOfLines|adjustsFontSizeToFit|ellipsizeMode/.test(screen));
+    assert.ok(screen.includes('<ScrollView'));
+    const planStyle = /\n  plan: \{([^}]*)\}/.exec(screen)?.[1] ?? '';
+    assert.match(planStyle, /minHeight: 76/);
+    assert.ok(!/\bheight:/.test(planStyle.replace('minHeight', '')), 'plan cards grow with their text');
+  });
+});
+
+describe('paywall contrast (WCAG AA: 4.5:1 for normal text, 3:1 for non-text indicators)', () => {
+  const tokens = read('src', 'theme', 'tokens.ts');
+  const screen = read('src', 'screens', 'PaywallScreen.tsx');
+  const backdropSource = read('src', 'components', 'OceanBackground.tsx');
+  const hex = (name: string): string => {
+    const match = new RegExp(`\\b${name}: (?:'(#[0-9A-Fa-f]{6})'|palette\\.(\\w+))`).exec(tokens);
+    assert.ok(match, name);
+    return match[1] ?? hex(match[2]);
+  };
+  const luminance = (color: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a: string, b: string) => {
+    const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (light + 0.05) / (dark + 0.05);
+  };
+  /** The token a piece of the screen uses, read from the screen's source. */
+  const tokenIn = (pattern: RegExp) => {
+    const name = pattern.exec(screen)?.[1];
+    assert.ok(name, String(pattern));
+    return name;
+  };
+  /** Every solid color the reef backdrop paints; its translucent layers only blend between these and white. */
+  const backdrop = [
+    ...new Set([...backdropSource.matchAll(/colors\.(\w+)/g)].map((match) => hex(match[1]))),
+    ...[...backdropSource.matchAll(/'(#[0-9A-Fa-f]{6})'/g)].map((match) => match[1]),
+  ];
+  const assertTextOverBackdrop = (token: string, what: string) => {
+    for (const background of backdrop) {
+      const ratio = contrast(hex(token), background);
+      assert.ok(ratio >= 4.5, `${what} (${token}) on ${background}: ${ratio.toFixed(2)}`);
+    }
+  };
+
+  test('the backdrop colors include the gradient, seaweed and coral', () => {
+    for (const token of ['skyBlue', 'oceanBlue', 'seafoam', 'coralPink', 'peach']) assert.ok(backdrop.includes(hex(token)), token);
+    assert.ok(backdrop.length >= 7);
+  });
+
+  test('text on the selected (peach) plan card', () => {
+    for (const text of ['textPrimaryStrong', 'textMutedStrong']) {
+      assert.ok(contrast(hex(text), hex('peach')) >= 4.5, `${text} on peach: ${contrast(hex(text), hex('peach')).toFixed(2)}`);
+    }
+    assert.ok(contrast(hex('coralInk'), hex('white')) >= 4.5, 'trial badge text on its white pill');
+    assert.ok(contrast(hex('textMuted'), hex('peach')) < 4.5, 'why textMuted is not used on peach');
+  });
+
+  test('text on unselected (white) plan cards', () => {
+    for (const text of ['textPrimary', 'textMuted']) assert.ok(contrast(hex(text), hex('white')) >= 4.5, text);
+  });
+
+  test('the renewal disclosure over every color of the reef backdrop', () => {
+    assertTextOverBackdrop(tokenIn(/color=\{colors\.(\w+)\} style=\{styles\.disclosure\}/), 'disclosure');  });
+
+  test('the legal-link captions over every color of the reef backdrop', () => {
+    assertTextOverBackdrop(tokenIn(/<AppText variant="caption" color=\{colors\.(\w+)\} style=\{styles\.underline\}>/), 'legal link');
+    assertTextOverBackdrop(tokenIn(/<AppText variant="caption" color=\{colors\.(\w+)\}>\s*\{label\} \(not configured\)/), 'unconfigured legal link');
+    assertTextOverBackdrop(tokenIn(/<AppText variant="caption" color=\{colors\.(\w+)\} accessible=\{false\}>\s*·/), 'legal separator');
+    assert.ok(contrast(hex('textMuted'), hex('coralPink')) < 4.5, 'why textMuted is not used over the backdrop');
+    assert.ok(contrast(hex('textPrimary'), hex('coralPink')) < 4.5, 'why textPrimary is not used over the backdrop');
+  });
+
+  test('Restore Purchases over every color of the reef backdrop', () => {
+    const token = tokenIn(/<AppText variant="label" color=\{colors\.(\w+)\}>\s*\{state\.busy === 'restoring' \? 'Restoring…' : 'Restore Purchases'\}/);
+    assert.equal(token, 'textPrimaryStrong');
+    assertTextOverBackdrop(token, 'Restore Purchases');
+  });
+
+  test('the selected radio stands out from the peach card and shows a check, not just a color', () => {
+    const card = hex(tokenIn(/planSelected: \{ backgroundColor: colors\.(\w+)/));
+    const fill = hex(tokenIn(/radioSelected: \{ backgroundColor: colors\.(\w+)/));
+    const ring = hex(tokenIn(/radioSelected: \{ backgroundColor: colors\.\w+, borderColor: colors\.(\w+)/));
+    const check = hex(tokenIn(/\{selected \? <Icon name="check" size=\{16\} color=\{colors\.(\w+)\}[^\n]*?\/> : null\}/));
+    assert.ok(contrast(ring, card) >= 3, `radio ring on the selected card: ${contrast(ring, card).toFixed(2)}`);
+    assert.ok(contrast(check, fill) >= 3, `check mark on the radio fill: ${contrast(check, fill).toFixed(2)}`);
+    assert.ok(contrast(fill, card) < 3, 'why the fill alone is not enough');
+    assert.match(/\n  radio: \{([^}]*)\}/.exec(screen)?.[1] ?? '', /borderWidth: 2,/);
+  });
+
+  test('the screen uses the stronger colors where the background needs them', () => {
+    assert.match(screen, /const ink = selected \? colors\.textPrimaryStrong : colors\.textPrimary;/);
+    assert.match(screen, /const muted = selected \? colors\.textMutedStrong : colors\.textMuted;/);
+    assert.match(screen, /variant="cardTitle" color=\{ink\}/);
+    assert.match(screen, /variant="bodyStrong" color=\{ink\}/);
+    assert.equal(occurrences(screen, 'variant="caption" color={muted}'), 2);
   });
 });

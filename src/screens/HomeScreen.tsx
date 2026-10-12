@@ -16,31 +16,40 @@ import { Bar, BarChart } from '../components/BarChart';
 import { BubbleArt } from '../components/BubbleArt';
 import { IconButton, PrimaryButton, SecondaryButton } from '../components/Buttons';
 import { Card } from '../components/Card';
-import { CounterScene } from '../components/CounterScene';
 import { Icon } from '../components/Icon';
+import { ReefBackdrop, SwimmingPuphii } from '../components/ReefScene';
 import { Wordmark } from '../components/Wordmark';
 import { formatAverage, periodRange, periodSeries, summarizePeriod } from '../data/insights';
 import { countOnDay, dayKeyOfLog, localDayKey } from '../data/puffLogic';
 import { usePuphii } from '../data/PuphiiStore';
+import { useAppActive } from '../hooks/useAppActive';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 import { useToday } from '../hooks/useToday';
-import { Mascot, MascotHandle } from '../mascot/Mascot';
+import { MascotHandle } from '../mascot/Mascot';
+import { PLATE_PADDING, reefLayout, SCENE_INSET } from '../mascot/reefMotion';
 import { playPuffSound, puffHaptic, selectionHaptic } from '../services/feedback';
-import { colors, fontFamilies, MAX_CONTENT_WIDTH, radii, spacing } from '../theme';
-import { clamp, formatFullDay, formatTime, formatWeekday, pluralize } from '../utils/format';
+import { colors, fontFamilies, MAX_CONTENT_WIDTH, radii, shadows, spacing, TOUCH_TARGET } from '../theme';
+import { formatFullDay, formatTime, formatWeekday, pluralize } from '../utils/format';
 
 const CARD_PADDING = spacing.xl;
-/** Mascot.tsx reserves extra width around the fish for reaction effects. */
-const MASCOT_FRAME = 1.25;
-/** Approximate advance width of one Fraunces Black digit, as a fraction of font size. */
-const DIGIT_WIDTH = 0.66;
+const MOTION_BUTTON_HEIGHT = 36;
 
-type Props = { onOpenSettings: () => void; onOpenInsights: () => void; onOpenBubbleBreak: () => void };
+type Props = {
+  onOpenSettings: () => void;
+  onOpenInsights: () => void;
+  onOpenBubbleBreak: () => void;
+  /** The reef animation is paused for this session (kept by the app shell across tabs). */
+  motionPaused: boolean;
+  onToggleMotion: () => void;
+};
 
-export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak }: Props) {
+export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak, motionPaused, onToggleMotion }: Props) {
   const { ready, logs, settings, addPuff, undoLatestToday, storageError, dismissStorageError } = usePuphii();
   const today = useToday();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
+  const reduceMotion = useReducedMotion();
+  const appActive = useAppActive();
   const mascotRef = useRef<MascotHandle>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [scene, setScene] = useState({ width: 0, height: 0 });
@@ -57,11 +66,14 @@ export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak }
   const tall = height >= 800;
   const compact = height < 700;
   const contentWidth = Math.min(width, MAX_CONTENT_WIDTH) - spacing.xl * 2;
-  const mascotSize = Math.round(clamp(contentWidth * 0.38, 92, tall ? 148 : 128));
-  const countColumnWidth = contentWidth - CARD_PADDING * 2 - mascotSize * MASCOT_FRAME - spacing.sm;
-  const digits = Math.max(2, String(todayCount).length);
-  const countSize = Math.floor(Math.min(tall ? 104 : compact ? 76 : 92, countColumnWidth / (digits * DIGIT_WIDTH)));
+  // The card's 1 pt border sits outside the scene.
+  const sceneWidth = scene.width || contentWidth - 2;
+  const digits = String(todayCount).length;
+  const layout = useMemo(() => reefLayout({ sceneWidth, screenHeight: height, digits }), [sceneWidth, height, digits]);
+  const sceneHeight = scene.height || layout.sceneMinHeight;
   const sectionGap = tall ? spacing.xl : spacing.lg;
+  // Home unmounts on other tabs and under Bubble Break, which stops every loop with it.
+  const animating = appActive && !motionPaused && !reduceMotion;
 
   const week = useMemo(() => {
     const range = periodRange('week', today);
@@ -127,37 +139,49 @@ export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak }
         {storageError ? <Banner message={storageError} onDismiss={dismissStorageError} /> : null}
 
         <Card style={styles.hero}>
-          <View style={styles.heroScene} onLayout={onSceneLayout}>
-            <CounterScene width={scene.width} height={scene.height} />
-            <View style={styles.heroRow}>
-              <View
-                style={styles.countColumn}
-                accessible
-                accessibilityLabel={`Today's count: ${pluralize(todayCount, 'puff')}`}
-              >
-                <AppText variant="label" color={colors.textMuted}>
-                  Today's count
+          <View style={[styles.heroScene, { minHeight: layout.sceneMinHeight }]} onLayout={onSceneLayout}>
+            <ReefBackdrop width={scene.width} height={scene.height} running={animating} />
+            <View
+              style={[styles.countPlate, { width: layout.plateWidth }]}
+              accessible
+              accessibilityLabel={`Today's count: ${pluralize(todayCount, 'puff')}`}
+            >
+              <AppText variant="label" color={colors.textMuted}>
+                Today's count
+              </AppText>
+              <Animated.View style={[styles.countWrap, { transform: [{ scale: bump }] }]}>
+                <AppText
+                  variant="count"
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  maxFontSizeMultiplier={1}
+                  style={{ fontSize: layout.countSize, lineHeight: Math.round(layout.countSize * 1.1) }}
+                >
+                  {todayCount}
                 </AppText>
-                <Animated.View style={[styles.countWrap, { transform: [{ scale: bump }] }]}>
-                  <AppText
-                    variant="count"
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                    maxFontSizeMultiplier={1}
-                    style={{ fontSize: countSize, lineHeight: Math.round(countSize * 1.1) }}
-                  >
-                    {todayCount}
-                  </AppText>
-                </Animated.View>
-              </View>
-              <Mascot ref={mascotRef} size={mascotSize} />
+              </Animated.View>
             </View>
+            <SwimmingPuphii ref={mascotRef} layout={layout} sceneHeight={sceneHeight} running={animating} still={reduceMotion} />
           </View>
           <View style={styles.statusRow}>
             <Icon name="clock" size={16} color={colors.textMuted} />
             <AppText variant="caption" style={styles.flex} accessibilityLiveRegion="polite">
               {statusText}
             </AppText>
+            {reduceMotion ? null : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={motionPaused ? 'Resume ocean animation' : 'Pause ocean animation'}
+                onPress={onToggleMotion}
+                hitSlop={(TOUCH_TARGET - MOTION_BUTTON_HEIGHT) / 2}
+                style={({ pressed }) => [styles.motionButton, pressed && { backgroundColor: colors.oceanBlue }]}
+              >
+                <Icon name={motionPaused ? 'play' : 'pause'} size={14} color={colors.textPrimary} strokeWidth={2.4} />
+                <AppText variant="caption" color={colors.textPrimary} style={styles.motionLabel}>
+                  {motionPaused ? 'Resume' : 'Pause'}
+                </AppText>
+              </Pressable>
+            )}
           </View>
         </Card>
 
@@ -252,24 +276,45 @@ const styles = StyleSheet.create({
   // The card itself can't clip (that would hide its shadow on iOS), so the scenery
   // section clips to the card's inner top corners instead.
   heroScene: {
-    padding: CARD_PADDING,
-    paddingBottom: spacing.sm,
+    padding: SCENE_INSET,
     borderTopLeftRadius: radii.xl - 1,
     borderTopRightRadius: radii.xl - 1,
     overflow: 'hidden',
+    backgroundColor: colors.oceanBlue,
   },
-  heroRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  countColumn: { flex: 1, minWidth: 0 },
+  // Opaque, so the photo and passing fish never sit behind the digits.
+  countPlate: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: PLATE_PADDING,
+    paddingTop: spacing.sm + 2,
+    paddingBottom: spacing.xs,
+    borderRadius: radii.lg,
+    backgroundColor: colors.warmCream,
+    ...shadows.soft,
+  },
   countWrap: { alignSelf: 'flex-start' },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs + 2,
+    minHeight: 52,
     paddingHorizontal: CARD_PADDING,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.borderStrong,
   },
+  motionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    height: MOTION_BUTTON_HEIGHT,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.pill,
+    backgroundColor: colors.skyBlue,
+    borderWidth: 1.5,
+    borderColor: colors.oceanBlue,
+  },
+  motionLabel: { fontFamily: fontFamilies.semibold },
   actions: { gap: spacing.md },
   weekCard: { padding: spacing.lg, gap: spacing.md },
   weekHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },

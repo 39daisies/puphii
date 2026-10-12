@@ -151,7 +151,7 @@ export function trialEligibilityFrom(status: number | undefined): TrialEligibili
 function planFor(info: PurchasesEntitlementInfo, productIds: Record<PlanId, string | null>): ReportedPlan {
   const candidates = [info.productIdentifier];
   if (info.productPlanIdentifier) candidates.push(`${info.productIdentifier}:${info.productPlanIdentifier}`);
-  for (const plan of ['annual', 'monthly'] as const) {
+  for (const plan of Object.keys(productIds) as PlanId[]) {
     const id = productIds[plan];
     if (id && candidates.includes(id)) return plan;
   }

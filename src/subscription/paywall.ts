@@ -24,7 +24,14 @@ export type PaywallEntitlements = {
   restorePurchases(): Promise<RestoreResult>;
 };
 
-const PLAN_ORDER: readonly PlanId[] = ['annual', 'monthly'];
+/** Display order. The first plan offered is selected by default. */
+export const PLAN_ORDER: readonly PlanId[] = ['annual', 'monthly', 'weekly'];
+
+/**
+ * Plans the paywall never describes an introductory offer for. Their package is only offered when
+ * the store reports none, since their wording would otherwise misstate what the store charges.
+ */
+export const NO_INTRO_OFFER_PLANS: readonly PlanId[] = ['weekly'];
 
 /** A package whose product was checked against the configuration and may be offered. */
 export type VerifiedPlan = { plan: PlanId; pkg: PurchasesPackage };
@@ -35,7 +42,8 @@ export type OfferingResolution =
 
 /**
  * The offering's packages whose product is this store's configured product with the plan's
- * billing period. Anything else, including the other store's products, is never offered.
+ * billing period. Anything else, including the other store's products, is never offered, and
+ * neither is a `NO_INTRO_OFFER_PLANS` plan whose product carries an introductory offer.
  */
 export function verifiedPlans(offering: PurchasesOffering, productIds: Record<PlanId, string | null>): VerifiedPlan[] {
   return PLAN_ORDER.flatMap((plan) => {
@@ -43,6 +51,7 @@ export function verifiedPlans(offering: PurchasesOffering, productIds: Record<Pl
     const pkg = offering.availablePackages.find((candidate) => candidate.identifier === PLANS[plan].packageId);
     if (!productId || !pkg) return [];
     if (pkg.product.identifier !== productId || pkg.product.subscriptionPeriod !== PLANS[plan].billingPeriod) return [];
+    if (NO_INTRO_OFFER_PLANS.includes(plan) && pkg.product.introPrice) return [];
     return [{ plan, pkg }];
   });
 }
@@ -52,7 +61,7 @@ const ownOffering = (offerings: PurchasesOfferings, id: string) =>
 
 /**
  * RevenueCat's current offering when its packages hold the configured products, otherwise
- * `PAYWALL_OFFERING_ID`. An offering with both plans wins over one with only one.
+ * `PAYWALL_OFFERING_ID`. The offering with the most verified plans wins; on a tie, the current one.
  */
 export function resolvePaywallOffering(
   offerings: PurchasesOfferings,
@@ -62,13 +71,12 @@ export function resolvePaywallOffering(
   const candidates = [offerings.current, ownOffering(offerings, fallbackId)].filter(
     (offering, index, all): offering is PurchasesOffering => !!offering && all.findIndex((other) => other?.identifier === offering.identifier) === index,
   );
-  let partial: OfferingResolution | null = null;
+  let best: { offeringId: string; plans: VerifiedPlan[] } | null = null;
   for (const offering of candidates) {
     const plans = verifiedPlans(offering, productIds);
-    if (plans.length === PLAN_ORDER.length) return { ok: true, offeringId: offering.identifier, plans };
-    if (plans.length && !partial) partial = { ok: true, offeringId: offering.identifier, plans };
+    if (plans.length > (best?.plans.length ?? 0)) best = { offeringId: offering.identifier, plans };
   }
-  if (partial) return partial;
+  if (best) return { ok: true, ...best };
   const expected = PLAN_ORDER.map((plan) => `${PLANS[plan].packageId} → ${productIds[plan] ?? 'none configured'}`).join(', ');
   const checked = candidates.map((offering) => offering.identifier).join(', ') || 'none returned';
   return { ok: false, detail: `No offering holds the configured products (${expected}). Offerings checked: ${checked}.` };
@@ -96,48 +104,71 @@ export type PlanDisplay = {
   /** The store's localized price, such as "$29.99" or "¥4,500". */
   price: string;
   priceLine: string;
-  /** Annual only: the SDK's localized monthly equivalent. */
+  /**
+   * Annual only: the SDK's localized monthly equivalent. Never shown for shorter plans, whose
+   * per-month figures the SDK only approximates.
+   */
   monthlyEquivalent: string | null;
+  /** That the plan keeps renewing every period. Shown under `priceLine`, so it doesn't repeat the price. */
+  billingLine: string;
   /** Shown only when the store offers a free trial and RevenueCat reports this customer eligible. */
   trialBadge: string | null;
+  /** The full terms for the selected plan. The only place besides `priceLine` that states the price. */
   disclosure: string;
   cta: string;
+  /** The plan card's screen-reader label: plan, trial if claimed, price per period and renewal, each once. */
+  accessibilityLabel: string;
+  ctaAccessibilityLabel: string;
 };
 
-const PERIOD = { P1Y: { noun: 'year', adverb: 'yearly', title: 'Yearly' }, P1M: { noun: 'month', adverb: 'monthly', title: 'Monthly' } } as const;
+const PERIOD = {
+  P1Y: { noun: 'year', title: 'Yearly' },
+  P1M: { noun: 'month', title: 'Monthly' },
+  P1W: { noun: 'week', title: 'Weekly' },
+} as const;
 
 /** Store account wording for renewal disclosures. */
 export const storeAccountFor = (platform: string) =>
   platform === 'ios' ? 'Apple Account' : platform === 'android' ? 'Google Account' : 'app store account';
 
-/** Who takes the payment, for the paywall's privacy note. */
+/** Who takes the payment and shows the final purchase confirmation. */
 export const storeNameFor = (platform: string) => (platform === 'ios' ? 'Apple' : platform === 'android' ? 'Google Play' : 'your app store');
 
 /**
  * Everything shown for one plan, from the store's product details. The trial is only claimed when
- * the product has a free introductory offer and RevenueCat confirms the customer can still use it.
+ * the product has a free introductory offer and RevenueCat confirms the customer can still use it,
+ * and never for a `NO_INTRO_OFFER_PLANS` plan.
  */
 export function describePlan({ plan, pkg }: VerifiedPlan, trialEligibility: TrialEligibility, platform: string): PlanDisplay {
   const period = PERIOD[PLANS[plan].billingPeriod];
   const price = pkg.product.priceString;
-  const offered = freeTrialLength(pkg);
+  const offered = NO_INTRO_OFFER_PLANS.includes(plan) ? null : freeTrialLength(pkg);
   const trial = trialEligibility === 'eligible' ? offered : null;
   const account = storeAccountFor(platform);
-  const renewal = `The subscription renews automatically every ${period.noun} unless you cancel at least 24 hours before the end of the current period. Manage or cancel it anytime in your ${account} settings.`;
+  const perPeriod = `${price} per ${period.noun}`;
+  const perMonth = plan === 'annual' ? pkg.product.pricePerMonthString : null;
+  const trialBadge = trial ? `${trial.amount}-${trial.unit} free trial` : null;
+  const renews = `Renews every ${period.noun} until you cancel.`;
+  const renewal = `Renews automatically every ${period.noun} unless cancelled at least 24 hours before the ${trial ? 'trial or current period' : 'current period'} ends. Cancel anytime in your ${account} settings.`;
   const disclosure = trial
-    ? `Free for ${plural(trial.amount, trial.unit)}, then ${price} per ${period.noun}. Your ${account} is charged ${price} when the trial ends unless you cancel at least 24 hours before then. ${renewal}`
+    ? `Free for ${plural(trial.amount, trial.unit)}, then ${perPeriod}, charged to your ${account} when the trial ends. ${renewal}`
     : offered && trialEligibility === 'unknown'
-      ? `${price} per ${period.noun}, charged to your ${account}. If you qualify for an introductory offer, the store shows it before you confirm. ${renewal}`
-      : `${price} per ${period.noun}, charged to your ${account} when you confirm. ${renewal}`;
+      ? `${perPeriod}, charged to your ${account}. If you qualify for an introductory offer, ${storeNameFor(platform)} shows it before you confirm. ${renewal}`
+      : `${perPeriod}, charged to your ${account} when you confirm. ${renewal}`;
+  const cta = trial ? 'Start free trial' : 'Subscribe';
+  const spokenPrice = `${trialBadge ? `${trialBadge}, then ` : ''}${perPeriod}${perMonth ? `, about ${perMonth} per month` : ''}`;
   return {
     plan,
     title: period.title,
     price,
     priceLine: `${price} / ${period.noun}`,
-    monthlyEquivalent: plan === 'annual' && pkg.product.pricePerMonthString ? `${pkg.product.pricePerMonthString} per month, billed ${period.adverb}` : null,
-    trialBadge: trial ? `${trial.amount}-${trial.unit} free trial` : null,
+    monthlyEquivalent: perMonth ? `About ${perMonth} per month` : null,
+    billingLine: trial ? `After the free trial, renews every ${period.noun} until you cancel.` : renews,
+    trialBadge,
     disclosure,
-    cta: trial ? 'Start free trial' : 'Subscribe',
+    cta,
+    accessibilityLabel: `${period.title} plan. ${spokenPrice}. ${renews}`,
+    ctaAccessibilityLabel: `${cta}, ${period.title} plan, ${trial ? 'then ' : ''}${perPeriod}`,
   };
 }
 
@@ -152,7 +183,7 @@ export const hasProAccess = (entitlement: Entitlement): boolean => entitlement.s
 
 /**
  * What must be configured before the paywall may appear in a release build. Development builds
- * show the paywall regardless, with these listed, so it can be tested.
+ * show the paywall regardless so it can be tested, and list these in the developer tools.
  */
 export function paywallConfigIssues(
   links: { termsOfUse: string | null; privacyPolicy: string | null } = LEGAL_URLS,
@@ -285,7 +316,7 @@ export function createPaywallController({
     update({ phase: 'unavailable', plans: [], trial: {}, selected: null, offeringId: null, unavailable: { message, detail } });
 
   async function trialEligibility(plans: VerifiedPlan[]): Promise<Partial<Record<PlanId, TrialEligibility>>> {
-    const withTrial = plans.filter(({ pkg }) => freeTrialLength(pkg));
+    const withTrial = plans.filter(({ plan, pkg }) => !NO_INTRO_OFFER_PLANS.includes(plan) && freeTrialLength(pkg));
     if (!sdk || !withTrial.length) return {};
     try {
       const statuses = await sdk.checkTrialEligibility(withTrial.map(({ pkg }) => pkg.product.identifier));

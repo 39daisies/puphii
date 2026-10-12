@@ -29,5 +29,12 @@ export const APP_STORE_EXPECTED: ExpectedOffering = {
       price: null,
       freeTrialDays: null,
     },
+    weekly: {
+      packageId: PLANS.weekly.packageId,
+      productId: PLANS.weekly.productIds.ios!,
+      billingPeriod: PLANS.weekly.billingPeriod,
+      price: null,
+      freeTrialDays: null,
+    },
   },
 };

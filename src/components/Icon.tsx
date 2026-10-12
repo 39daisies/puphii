@@ -23,7 +23,9 @@ export type IconName =
   | 'external'
   | 'clock'
   | 'user'
-  | 'close';
+  | 'close'
+  | 'pause'
+  | 'play';
 
 type Props = {
   name: IconName;
@@ -190,6 +192,10 @@ export function Icon({ name, size = 24, color = colors.textPrimary, fill = 'none
             <Path d="M4.6 20.2c.6-3.9 3.6-6.2 7.4-6.2s6.8 2.3 7.4 6.2Z" fill={fill} {...stroke} />
           </>
         );
+      case 'pause':
+        return <Path d="M9 6.4v11.2M15 6.4v11.2" fill="none" {...stroke} />;
+      case 'play':
+        return <Path d="M8.4 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7Z" fill={fill} {...stroke} />;
     }
   })();
 

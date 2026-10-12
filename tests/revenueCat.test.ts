@@ -10,7 +10,7 @@ import {
   SUBSCRIPTION_GATING_ENABLED,
   TEST_STORE_PRODUCT_IDS,
 } from '../src/subscription/config';
-import { accessFor, Entitlement } from '../src/subscription/entitlement';
+import { accessFor, Entitlement, PlanId } from '../src/subscription/entitlement';
 import { createMockEntitlementService, mockEntitlements } from '../src/subscription/mockEntitlements';
 import {
   classifyError,
@@ -40,10 +40,11 @@ const rc = require('@revenuecat/purchases-typescript-internal');
 
 /** Test-only identifiers, deliberately different from the app's real ones. */
 const ENTITLEMENT = 'test-entitlement';
-const PRODUCTS = { annual: 'test.annual', monthly: 'test.monthly' };
+const PRODUCTS = { annual: 'test.annual', monthly: 'test.monthly', weekly: 'test.weekly' };
+const NO_PRODUCTS = { annual: null, monthly: null, weekly: null };
 /** The real product IDs, written out so a change to config.ts has to be deliberate. */
-const APP_STORE = { annual: 'puphii_annual_2999', monthly: 'puphii_monthly_499' };
-const TEST_STORE = { annual: 'yearly_2999', monthly: 'monthly_499' };
+const APP_STORE = { annual: 'puphii_annual_2999', monthly: 'puphii_monthly_499', weekly: 'puphii_weekly_199' };
+const TEST_STORE = { annual: 'yearly_2999', monthly: 'monthly_499', weekly: 'weekly_199' };
 const IOS_KEY: SdkKeyCheck = { ok: true, apiKey: 'appl_TestOnlyKey123', source: 'platform' };
 type Verified = PurchasesEntitlementInfo['verification'];
 const REQUEST_DATE = '2026-10-10T12:00:00.000Z';
@@ -73,7 +74,7 @@ function customer(entries: PurchasesEntitlementInfo[] = [], verification = 'NOT_
   return { entitlements: { all, active, verification }, requestDate: REQUEST_DATE } as unknown as CustomerInfo;
 }
 
-const map = (info: CustomerInfo, productIds: Record<'annual' | 'monthly', string | null> = PRODUCTS) =>
+const map = (info: CustomerInfo, productIds: Record<PlanId, string | null> = PRODUCTS) =>
   entitlementFromCustomerInfo(info, ENTITLEMENT, productIds);
 
 function deferred<T>() {
@@ -277,13 +278,15 @@ describe('RevenueCat setup', () => {
     assert.equal(REVENUECAT_ENTITLEMENT_ID, 'puphii_pro');
     assert.equal(PLANS.annual.packageId, '$rc_annual');
     assert.equal(PLANS.monthly.packageId, '$rc_monthly');
+    assert.equal(PLANS.weekly.packageId, '$rc_weekly');
   });
 
   test('the App Store products match App Store Connect; Google Play has none yet', () => {
     assert.deepEqual(PLANS.annual.productIds, { ios: 'puphii_annual_2999', android: null });
     assert.deepEqual(PLANS.monthly.productIds, { ios: 'puphii_monthly_499', android: null });
+    assert.deepEqual(PLANS.weekly.productIds, { ios: 'puphii_weekly_199', android: null });
     assert.deepEqual(productIdsFor('platform', 'ios'), APP_STORE);
-    assert.deepEqual(productIdsFor('platform', 'android'), { annual: null, monthly: null });
+    assert.deepEqual(productIdsFor('platform', 'android'), NO_PRODUCTS);
   });
 
   test('Test Store products are kept apart from the App Store and Google Play products', () => {
@@ -297,7 +300,7 @@ describe('RevenueCat setup', () => {
     assert.deepEqual(key, { ok: false, reason: 'missing' });
     const release = selectSdkKey({ platform: 'android', platformKey: 'goog_abc123', testStoreKey: 'test_abc123', isDevelopmentBuild: false });
     assert.ok(release.ok && release.source === 'platform');
-    assert.deepEqual(productIdsFor(release.source, 'android'), { annual: null, monthly: null });
+    assert.deepEqual(productIdsFor(release.source, 'android'), NO_PRODUCTS);
     const iosRelease = selectSdkKey({ platform: 'ios', platformKey: 'appl_abc123', testStoreKey: 'test_abc123', isDevelopmentBuild: false });
     assert.ok(iosRelease.ok && iosRelease.source === 'platform');
     assert.deepEqual(productIdsFor(iosRelease.source, 'ios'), APP_STORE);
@@ -323,8 +326,8 @@ describe('App Store and Test Store products are never mixed', () => {
   test('no product ID belongs to both stores, and each store has one per plan', () => {
     const apple = ids(productIdsFor('platform', 'ios'));
     const testStore = ids(productIdsFor('testStore', 'ios'));
-    assert.equal(new Set(apple).size, 2);
-    assert.equal(new Set(testStore).size, 2);
+    assert.equal(new Set(apple).size, 3);
+    assert.equal(new Set(testStore).size, 3);
     for (const id of apple) assert.ok(!testStore.includes(id), `${id} is in both stores`);
     for (const id of apple) assert.match(id, /^puphii_/, 'App Store IDs carry the app prefix');
     for (const id of testStore) assert.doesNotMatch(id, /^puphii_/, 'Test Store IDs never carry it');
@@ -335,17 +338,29 @@ describe('App Store and Test Store products are never mixed', () => {
       const products = productIdsFor(source, 'ios');
       assert.match(products.annual ?? '', /annual|yearly/, source);
       assert.match(products.monthly ?? '', /monthly/, source);
+      assert.match(products.weekly ?? '', /weekly/, source);
     }
     assert.match(PLANS.annual.productIds.ios ?? '', /2999$/);
     assert.match(PLANS.monthly.productIds.ios ?? '', /499$/);
+    assert.match(PLANS.weekly.productIds.ios ?? '', /199$/);
+    assert.deepEqual(
+      Object.values(PLANS).map((plan) => [plan.packageId, plan.billingPeriod]),
+      [
+        ['$rc_annual', 'P1Y'],
+        ['$rc_monthly', 'P1M'],
+        ['$rc_weekly', 'P1W'],
+      ],
+    );
   });
 
   test('with the App Store key, App Store purchases are their plan and Test Store products are none', () => {
     const apple = productIdsFor('platform', 'ios');
     const annual = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'puphii_annual_2999', periodType: 'TRIAL' })]), ENTITLEMENT, apple);
     const monthly = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'puphii_monthly_499' })]), ENTITLEMENT, apple);
+    const weekly = entitlementFromCustomerInfo(customer([entry({ productIdentifier: 'puphii_weekly_199' })]), ENTITLEMENT, apple);
     assert.ok(annual.status === 'active' && annual.plan === 'annual' && annual.period === 'trial');
     assert.ok(monthly.status === 'active' && monthly.plan === 'monthly');
+    assert.ok(weekly.status === 'active' && weekly.plan === 'weekly');
     for (const id of ids(TEST_STORE)) {
       const state = entitlementFromCustomerInfo(customer([entry({ productIdentifier: id })]), ENTITLEMENT, apple);
       assert.ok(state.status === 'active' && state.plan === null, id);
@@ -513,12 +528,14 @@ describe('customer info mapping', () => {
   });
 
   test('Android base plans are matched as subscriptionId:basePlanId, and unknown products report no plan', () => {
-    const android = { annual: 'puphii_sub:annual', monthly: 'puphii_sub:monthly' };
+    const android = { annual: 'puphii_sub:annual', monthly: 'puphii_sub:monthly', weekly: 'puphii_sub:weekly' };
     const state = map(customer([entry({ productIdentifier: 'puphii_sub', productPlanIdentifier: 'monthly' })]), android);
     assert.ok(state.status === 'active' && state.plan === 'monthly');
+    const weekly = map(customer([entry({ productIdentifier: 'puphii_sub', productPlanIdentifier: 'weekly' })]), android);
+    assert.ok(weekly.status === 'active' && weekly.plan === 'weekly');
     const unknown = map(customer([entry({ productIdentifier: 'something.else' })]));
     assert.ok(unknown.status === 'active' && unknown.plan === null, 'access still follows the entitlement');
-    const unset = map(customer([entry()]), { annual: null, monthly: null });
+    const unset = map(customer([entry()]), NO_PRODUCTS);
     assert.ok(unset.status === 'active' && unset.plan === null);
   });
 
@@ -597,7 +614,7 @@ describe('RevenueCat entitlement service', () => {
   });
 
   test('trial eligibility is unknown without an annual product or when the check fails', async () => {
-    const noProduct = setup({ productIds: { annual: null, monthly: null } });
+    const noProduct = setup({ productIds: NO_PRODUCTS });
     noProduct.service.start();
     await settle();
     assert.ok(noProduct.service.current().status === 'inactive');
