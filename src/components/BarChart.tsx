@@ -1,20 +1,11 @@
 import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { colors, fontFamilies, spacing } from '../theme';
-import { pluralize } from '../utils/format';
 import { AppText } from './AppText';
+import { Bar, chartMax, spokenBar, targetOffset } from './barChartModel';
 
-export type Bar = {
-  key: string;
-  value: number;
-  label: string;
-  sublabel?: string;
-  highlight?: boolean;
-  /** Not reached yet: drawn as an empty slot rather than as zero. */
-  future?: boolean;
-  /** Spoken description, e.g. "Monday October 5". */
-  spokenLabel: string;
-};
+export type { Bar } from './barChartModel';
+export { spokenBar } from './barChartModel';
 
 type Props = {
   data: Bar[];
@@ -24,17 +15,16 @@ type Props = {
   /** Makes each bar a button so its count can be inspected. */
   onSelect?: (key: string) => void;
   selectedKey?: string | null;
+  /** Spoken before the bars, e.g. "Logged puffs and daily targets". */
+  accessibilityTitle?: string;
 };
 
 const LABEL_ROW = 18;
 const VALUE_ROW = 18;
 const DENSE_LABEL_WIDTH = 40;
 
-export const spokenBar = (bar: Bar) =>
-  `${bar.spokenLabel}: ${bar.future ? 'not yet' : pluralize(bar.value, 'logged puff')}`;
-
-export function BarChart({ data, height = 128, showValues = true, dense = false, onSelect, selectedKey }: Props) {
-  const max = Math.max(1, ...data.map((bar) => (bar.future ? 0 : bar.value)));
+export function BarChart({ data, height = 128, showValues = true, dense = false, onSelect, selectedKey, accessibilityTitle = 'Logged puffs' }: Props) {
+  const max = chartMax(data);
   const interactive = !!onSelect;
   const labelRows = dense ? 0 : data.some((bar) => bar.sublabel) ? 2 : 1;
 
@@ -42,7 +32,7 @@ export function BarChart({ data, height = 128, showValues = true, dense = false,
     <View
       accessible={!interactive}
       accessibilityRole={interactive ? undefined : 'image'}
-      accessibilityLabel={interactive ? undefined : `Logged puffs. ${data.map(spokenBar).join(', ')}`}
+      accessibilityLabel={interactive ? undefined : `${accessibilityTitle}. ${data.map(spokenBar).join(', ')}`}
     >
       <View style={styles.row}>
         {data.map((bar) => {
@@ -50,12 +40,15 @@ export function BarChart({ data, height = 128, showValues = true, dense = false,
           const column = (
             <>
               <View style={[styles.plot, { height: height + (showValues ? VALUE_ROW : 0) }]}>
-                {showValues && !bar.future ? (
+                {showValues && !bar.future && !bar.untracked ? (
                   <AppText variant="chartValue" align="center" color={bar.highlight ? colors.coralInk : colors.textPrimary}>
                     {bar.value}
                   </AppText>
                 ) : null}
                 <BarShape bar={bar} max={max} height={height} dense={dense} selected={selected} />
+                {bar.target != null ? (
+                  <View pointerEvents="none" style={[styles.target, { bottom: Math.max(0, targetOffset(bar.target, max, height) - 1) }]} />
+                ) : null}
               </View>
               <View style={[styles.labelCell, { minHeight: LABEL_ROW * labelRows }]}>
                 {dense ? null : <AxisLabel text={bar.label} highlight={bar.highlight} selected={selected} />}
@@ -101,7 +94,7 @@ export function BarChart({ data, height = 128, showValues = true, dense = false,
 }
 
 function BarShape({ bar, max, height, dense, selected }: { bar: Bar; max: number; height: number; dense: boolean; selected: boolean }) {
-  if (bar.future) return <View style={[styles.futureSlot, dense && styles.barDense]} />;
+  if (bar.future || bar.untracked) return <View style={[styles.futureSlot, dense && styles.barDense]} />;
   const barHeight = bar.value === 0 ? 4 : Math.max(dense ? 6 : 10, (bar.value / max) * height);
   return (
     <View
@@ -138,6 +131,7 @@ const styles = StyleSheet.create({
   column: { flex: 1, alignItems: 'center', marginHorizontal: 3 },
   columnDense: { marginHorizontal: 1 },
   plot: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.xs },
+  target: { position: 'absolute', left: 0, right: 0, height: 2.5, borderRadius: 2, backgroundColor: colors.deepOcean },
   bar: {
     width: '100%',
     maxWidth: 30,

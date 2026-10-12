@@ -25,7 +25,8 @@ export type IconName =
   | 'user'
   | 'close'
   | 'pause'
-  | 'play';
+  | 'play'
+  | 'gamepad';
 
 type Props = {
   name: IconName;
@@ -196,6 +197,19 @@ export function Icon({ name, size = 24, color = colors.textPrimary, fill = 'none
         return <Path d="M9 6.4v11.2M15 6.4v11.2" fill="none" {...stroke} />;
       case 'play':
         return <Path d="M8.4 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7Z" fill={fill} {...stroke} />;
+      case 'gamepad':
+        return (
+          <>
+            <Path
+              d="M7.6 7.4h8.8a4.4 4.4 0 0 1 4.3 3.6l.9 5a2.5 2.5 0 0 1-4.3 2.2l-1.8-1.8H8.5l-1.8 1.8a2.5 2.5 0 0 1-4.3-2.2l.9-5a4.4 4.4 0 0 1 4.3-3.6Z"
+              fill={fill}
+              {...stroke}
+            />
+            <Path d="M8 10.4v3.6M6.2 12.2h3.6" fill="none" {...stroke} />
+            <Circle cx={15.4} cy={11.2} r={1} fill={color} />
+            <Circle cx={17.6} cy={13.3} r={1} fill={color} />
+          </>
+        );
     }
   })();
 

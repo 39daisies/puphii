@@ -11,6 +11,8 @@ export type RawData = {
   savings: unknown;
   game: unknown;
   appState: unknown;
+  /** Added without a schema change: installs from before plans simply have none. */
+  plan: unknown;
 };
 
 export type MigrationContext = { now: Date };

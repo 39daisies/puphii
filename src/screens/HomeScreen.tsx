@@ -13,7 +13,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../components/AppText';
 import { Banner } from '../components/Banner';
 import { Bar, BarChart } from '../components/BarChart';
-import { BubbleArt } from '../components/BubbleArt';
 import { IconButton, PrimaryButton, SecondaryButton } from '../components/Buttons';
 import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
@@ -27,24 +26,59 @@ import { useReducedMotion } from '../hooks/useReducedMotion';
 import { useToday } from '../hooks/useToday';
 import { MascotHandle } from '../mascot/Mascot';
 import { PLATE_PADDING, reefLayout, SCENE_INSET } from '../mascot/reefMotion';
+import {
+  HOME_INVITE_DISMISS,
+  HOME_INVITE_LABEL,
+  HOME_INVITE_TEXT,
+  HOME_NEW_GOAL_DISMISS,
+  HOME_NEW_GOAL_LABEL,
+  HOME_NEW_GOAL_TEXT,
+  HOME_TARGET_TITLE,
+  homeTargetLine,
+  MANAGE_ACTIONS,
+  OPEN_PLAN_HINT,
+  planWeekLine,
+  RESUMED_NOTICE,
+  TODAY_TITLE,
+  todayNote,
+  WEEK_CHART_SPOKEN_TITLE,
+  weekSummaryLine,
+  YOUR_PLAN_ROW,
+} from '../plan/copy';
+import { homePlanView, unseenMilestones } from '../plan/view';
 import { playPuffSound, puffHaptic, selectionHaptic } from '../services/feedback';
 import { colors, fontFamilies, MAX_CONTENT_WIDTH, radii, shadows, spacing, TOUCH_TARGET } from '../theme';
 import { formatFullDay, formatTime, formatWeekday, pluralize } from '../utils/format';
+import { MilestoneNotice } from './plan/MilestoneNotice';
+import { ChartLegend } from './plan/PlanDashboard';
+import { planBars } from './plan/planBars';
 
 const CARD_PADDING = spacing.xl;
 const MOTION_BUTTON_HEIGHT = 36;
 
 type Props = {
   onOpenSettings: () => void;
+  /** Your Plan, on the You tab. */
+  onOpenPlan: () => void;
   onOpenInsights: () => void;
-  onOpenBubbleBreak: () => void;
   /** The reef animation is paused for this session (kept by the app shell across tabs). */
   motionPaused: boolean;
   onToggleMotion: () => void;
+  /** The goal suggestion was hidden earlier in this app session (kept by the app shell). */
+  inviteHidden: boolean;
+  onHideInvite: () => void;
 };
 
-export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak, motionPaused, onToggleMotion }: Props) {
-  const { ready, logs, settings, addPuff, undoLatestToday, storageError, dismissStorageError } = usePuphii();
+export function HomeScreen({
+  onOpenSettings,
+  onOpenPlan,
+  onOpenInsights,
+  motionPaused,
+  onToggleMotion,
+  inviteHidden,
+  onHideInvite,
+}: Props) {
+  const { ready, logs, settings, addPuff, undoLatestToday, storageError, dismissStorageError, plan, planActions } = usePuphii();
   const today = useToday();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
@@ -72,7 +106,7 @@ export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak, 
   const layout = useMemo(() => reefLayout({ sceneWidth, screenHeight: height, digits }), [sceneWidth, height, digits]);
   const sceneHeight = scene.height || layout.sceneMinHeight;
   const sectionGap = tall ? spacing.xl : spacing.lg;
-  // Home unmounts on other tabs and under Bubble Break, which stops every loop with it.
+  // Home unmounts on other tabs, which stops every loop with it.
   const animating = appActive && !motionPaused && !reduceMotion;
 
   const week = useMemo(() => {
@@ -88,6 +122,32 @@ export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak, 
     }));
     return { bars, total, average: formatAverage(average) };
   }, [logs, today, todayKey]);
+
+  const planView = useMemo(() => (ready ? homePlanView(plan, logs, todayKey) : null), [ready, plan, logs, todayKey]);
+  const invite =
+    planView?.kind === 'invite' && planView.ended
+      ? { label: HOME_NEW_GOAL_LABEL, text: HOME_NEW_GOAL_TEXT, dismiss: HOME_NEW_GOAL_DISMISS }
+      : { label: HOME_INVITE_LABEL, text: HOME_INVITE_TEXT, dismiss: HOME_INVITE_DISMISS };
+  // With a plan, the week shows each day's target, and finished days without activity as empty slots.
+  const chartBars = useMemo(
+    () =>
+      planView?.kind === 'plan'
+        ? planBars(planView.days, todayKey).map((bar) => (bar.key === todayKey ? { ...bar, spokenLabel: 'Today' } : bar))
+        : week.bars,
+    [planView, todayKey, week.bars],
+  );
+
+  // A new day can start or end a pause, move the target and settle milestones, while Home stays open.
+  useEffect(() => {
+    if (appActive) planActions.refresh();
+  }, [todayKey, appActive, planActions]);
+
+  const newMilestoneIds = useMemo(() => (ready ? unseenMilestones(plan).map((milestone) => milestone.id) : []), [ready, plan]);
+  const acknowledgeMilestones = useCallback(() => planActions.markMilestonesSeen(newMilestoneIds), [planActions, newMilestoneIds]);
+
+  const resumePlan = useCallback(() => {
+    if (planActions.resume().ok) AccessibilityInfo.announceForAccessibility(RESUMED_NOTICE);
+  }, [planActions]);
 
   const bump = useRef(new Animated.Value(1)).current;
   const previousCount = useRef(todayCount);
@@ -203,6 +263,46 @@ export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak, 
           />
         </View>
 
+        {newMilestoneIds.length ? (
+          <MilestoneNotice ids={newMilestoneIds} onOpen={onOpenPlan} onDismiss={acknowledgeMilestones} />
+        ) : null}
+
+        {planView?.kind === 'plan' ? (
+          <Card style={styles.weekCard}>
+            <View style={styles.weekHeader}>
+              <View style={styles.flex} accessible accessibilityRole="header">
+                <AppText variant="cardTitle">{planView.paused ? TODAY_TITLE : HOME_TARGET_TITLE}</AppText>
+                <AppText variant="caption">{planWeekLine(planView.week, planView.paused)}</AppText>
+              </View>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel={YOUR_PLAN_ROW}
+                accessibilityHint={OPEN_PLAN_HINT}
+                onPress={onOpenPlan}
+                hitSlop={8}
+                style={({ pressed }) => [styles.seeAll, pressed && { opacity: 0.6 }]}
+              >
+                <AppText variant="label" color={colors.textPrimary} style={styles.seeAllText}>
+                  {YOUR_PLAN_ROW}
+                </AppText>
+                <Icon name="chevronRight" size={18} color={colors.textPrimary} />
+              </Pressable>
+            </View>
+            <AppText variant="sectionTitle">{homeTargetLine(planView.progress)}</AppText>
+            <AppText variant="bodySmall" color={colors.textPrimary}>
+              {todayNote(planView.progress)}
+            </AppText>
+            {planView.paused ? (
+              <SecondaryButton
+                label={MANAGE_ACTIONS.resume.label}
+                icon="play"
+                accessibilityHint={MANAGE_ACTIONS.resume.detail}
+                onPress={resumePlan}
+              />
+            ) : null}
+          </Card>
+        ) : null}
+
         <Card style={styles.weekCard}>
           <View style={styles.weekHeader}>
             <View style={styles.flex}>
@@ -224,35 +324,37 @@ export function HomeScreen({ onOpenSettings, onOpenInsights, onOpenBubbleBreak, 
               <Icon name="chevronRight" size={18} color={colors.textPrimary} />
             </Pressable>
           </View>
-          <BarChart data={week.bars} height={compact ? 44 : 56} />
+          {planView?.kind === 'plan' ? (
+            <>
+              <BarChart data={chartBars} height={compact ? 44 : 56} accessibilityTitle={WEEK_CHART_SPOKEN_TITLE} />
+              {chartBars.some((bar) => bar.target != null || bar.untracked) ? <ChartLegend /> : null}
+              <AppText variant="bodySmall" color={colors.textPrimary}>
+                {weekSummaryLine(planView.summary)}
+              </AppText>
+            </>
+          ) : (
+            <BarChart data={chartBars} height={compact ? 44 : 56} />
+          )}
         </Card>
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Bubble Break"
-          accessibilityHint="Opens a 30-second bubble game"
-          onPress={onOpenBubbleBreak}
-          style={({ pressed }) => pressed && { opacity: 0.85 }}
-        >
-          <Card style={styles.playCard}>
-            <View style={styles.playArt} pointerEvents="none">
-              <View style={[styles.playBubble, { left: 0, top: 10 }]}>
-                <BubbleArt size={30} tint={0} />
+        {planView?.kind === 'invite' && !inviteHidden ? (
+          <Card style={styles.inviteCard}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={invite.label}
+              accessibilityHint={invite.text}
+              onPress={onOpenPlan}
+              style={({ pressed }) => [styles.inviteMain, pressed && { opacity: 0.6 }]}
+            >
+              <View style={styles.flex}>
+                <AppText variant="cardTitle">{invite.label}</AppText>
+                <AppText variant="caption">{invite.text}</AppText>
               </View>
-              <View style={[styles.playBubble, { left: 20, top: 0 }]}>
-                <BubbleArt size={22} tint={1} />
-              </View>
-              <View style={[styles.playBubble, { left: 24, top: 22 }]}>
-                <BubbleArt size={18} tint={2} />
-              </View>
-            </View>
-            <View style={styles.flex}>
-              <AppText variant="cardTitle">Bubble Break</AppText>
-              <AppText variant="caption">A 30-second pause when you need one.</AppText>
-            </View>
-            <Icon name="chevronRight" size={20} color={colors.textPrimary} />
+              <Icon name="chevronRight" size={18} color={colors.textPrimary} />
+            </Pressable>
+            <IconButton icon="close" accessibilityLabel={invite.dismiss} onPress={onHideInvite} size={20} />
           </Card>
-        </Pressable>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -320,7 +422,6 @@ const styles = StyleSheet.create({
   weekHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   seeAll: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingLeft: spacing.sm },
   seeAllText: { fontFamily: fontFamilies.semibold },
-  playCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md, minHeight: 64 },
-  playArt: { width: 44, height: 40 },
-  playBubble: { position: 'absolute' },
+  inviteCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.sm, paddingLeft: spacing.lg, paddingRight: spacing.xs },
+  inviteMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 44, paddingVertical: spacing.xs },
 });

@@ -1,4 +1,5 @@
 import { DEFAULT_GAME_STATS, GameStats } from '../game/gameStats';
+import { defaultPlan, PlanRecord } from '../plan/model';
 import { defaultSavings, SavingsSettings } from './savings';
 import { STORAGE_KEYS, USER_DATA_KEYS } from './storageKeys';
 import { DEFAULT_SETTINGS, PuffLog, Settings } from './types';
@@ -11,8 +12,14 @@ import { DEFAULT_SETTINGS, PuffLog, Settings } from './types';
 export const RESET_KEYS = USER_DATA_KEYS;
 export const KEPT_ON_RESET = [STORAGE_KEYS.appState, STORAGE_KEYS.schema] as const;
 
-export type ResetValues = { logs: PuffLog[]; settings: Settings; savings: SavingsSettings; gameStats: GameStats };
+export type ResetValues = { logs: PuffLog[]; settings: Settings; savings: SavingsSettings; gameStats: GameStats; plan: PlanRecord };
 
 export function resetValues(currency: string): ResetValues {
-  return { logs: [], settings: { ...DEFAULT_SETTINGS }, savings: defaultSavings(currency), gameStats: { ...DEFAULT_GAME_STATS } };
+  return {
+    logs: [],
+    settings: { ...DEFAULT_SETTINGS },
+    savings: defaultSavings(currency),
+    gameStats: { ...DEFAULT_GAME_STATS },
+    plan: defaultPlan(),
+  };
 }

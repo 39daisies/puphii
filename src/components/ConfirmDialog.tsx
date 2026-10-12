@@ -11,10 +11,12 @@ type Props = {
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** `primary` for consequential changes that delete nothing. */
+  confirmTone?: 'destructive' | 'primary';
 };
 
 /** Cross-platform confirmation (Alert.alert buttons are not supported on web). */
-export function ConfirmDialog({ visible, title, message, confirmLabel, onConfirm, onCancel }: Props) {
+export function ConfirmDialog({ visible, title, message, confirmLabel, onConfirm, onCancel, confirmTone = 'destructive' }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel} statusBarTranslucent>
       <Pressable style={styles.scrim} onPress={onCancel} accessibilityLabel="Dismiss" accessibilityRole="button">
@@ -27,7 +29,7 @@ export function ConfirmDialog({ visible, title, message, confirmLabel, onConfirm
           </AppText>
           <View style={styles.actions}>
             <DialogButton label="Cancel" onPress={onCancel} />
-            <DialogButton label={confirmLabel} tone="destructive" onPress={onConfirm} />
+            <DialogButton label={confirmLabel} tone={confirmTone} onPress={onConfirm} />
           </View>
         </Pressable>
       </Pressable>

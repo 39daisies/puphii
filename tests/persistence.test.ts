@@ -6,6 +6,7 @@ import { CURRENT_SCHEMA_VERSION, Migration, MIGRATIONS, runMigrations } from '..
 import { CORRUPT_DATA_MESSAGE, KeyValueStore, loadFrom, LoadOptions, READ_ERROR_MESSAGE, removeSetAsideCopies } from '../src/data/persistence';
 import { isPreserved, withUnknownFields } from '../src/data/preserve';
 import { createLog } from '../src/data/puffLogic';
+import { defaultPlan } from '../src/plan/model';
 import { deleteRecordingFiles, planRecordingDeletion } from '../src/data/recordings';
 import { KEPT_ON_RESET, RESET_KEYS, resetValues } from '../src/data/reset';
 import { defaultSavings } from '../src/data/savings';
@@ -103,7 +104,8 @@ describe('legacy data migration', () => {
     assert.equal(result.appState?.firstLaunchSource, 'existingInstall');
     assert.equal(result.appState?.firstLaunchAt, NOW.toISOString());
     assert.deepEqual(store.json(STORAGE_KEYS.appState), result.appState);
-    assert.equal(store.keysStartingWith('@puphii/').length, USER_DATA_KEYS.length + 2, 'no backup copies were needed');
+    assert.equal(store.keysStartingWith('@puphii/').length, Object.keys(LEGACY).length + 2, 'no backup copies or plan were written');
+    assert.equal(result.plan.goal, 'track');
   });
 
   test('a fresh install is recorded as one, without writing any user data', async () => {
@@ -142,7 +144,7 @@ describe('legacy data migration', () => {
     for (let version = 1; version < CURRENT_SCHEMA_VERSION; version += 1) {
       assert.equal(MIGRATIONS.filter((migration) => migration.from === version && migration.to === version + 1).length, 1);
     }
-    const raw = { logs: [], settings: null, savings: null, game: null, appState: null };
+    const raw = { logs: [], settings: null, savings: null, game: null, appState: null, plan: null };
     const once = runMigrations(raw, 1, { now: NOW });
     const twice = runMigrations(once.data, 1, { now: LATER });
     assert.deepEqual(twice.data, once.data);
@@ -278,11 +280,13 @@ describe('malformed data', () => {
       [STORAGE_KEYS.settings]: JSON.stringify('dramatic'),
       [STORAGE_KEYS.savings]: [1, 2],
       [STORAGE_KEYS.game]: 7,
+      [STORAGE_KEYS.plan]: [3],
     });
     const result = await load(store);
     assert.deepEqual(result.logs, []);
     assert.deepEqual(result.settings, DEFAULT_SETTINGS);
     assert.deepEqual(result.gameStats, { roundsCompleted: 0, bestScore: 0 });
+    assert.deepEqual(result.plan, defaultPlan());
     for (const key of USER_DATA_KEYS) assert.equal(store.keysStartingWith(`${key}-invalid-`).length, 1);
   });
 
@@ -315,6 +319,8 @@ describe('reset', () => {
       [`${STORAGE_KEYS.logs}-corrupt-1`]: 'x',
       [`${STORAGE_KEYS.settings}-invalid-2`]: '{}',
       [`${STORAGE_KEYS.savings}-premigration-3`]: '{}',
+      [STORAGE_KEYS.plan]: { ...defaultPlan(), homeInvite: { dismissedAt: NOW.toISOString() } },
+      [`${STORAGE_KEYS.plan}-invalid-4`]: '{}',
       '@other-library/cache': 'keep',
     });
     const before = await load(store);
@@ -325,6 +331,7 @@ describe('reset', () => {
       [STORAGE_KEYS.settings, JSON.stringify(reset.settings)],
       [STORAGE_KEYS.savings, JSON.stringify(reset.savings)],
       [STORAGE_KEYS.game, JSON.stringify(reset.gameStats)],
+      [STORAGE_KEYS.plan, JSON.stringify(reset.plan)],
     ]);
     await removeSetAsideCopies(store, RESET_KEYS);
 
@@ -337,6 +344,7 @@ describe('reset', () => {
     assert.deepEqual(after.settings, DEFAULT_SETTINGS);
     assert.deepEqual(after.savings, defaultSavings('USD'));
     assert.deepEqual(after.gameStats, { roundsCompleted: 0, bestScore: 0 });
+    assert.deepEqual(after.plan, defaultPlan());
     assert.deepEqual(after.appState, before.appState);
   });
 

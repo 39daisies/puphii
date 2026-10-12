@@ -649,6 +649,17 @@ export function createRoundController({
       set(resumeRound(state));
       startLoop();
     },
+    /** Ends a round early without a score: nothing is recorded and the next round starts fresh. */
+    abandon() {
+      if (disposed || (state.status !== 'playing' && state.status !== 'paused')) return;
+      stopLoop();
+      set(createRound(tuning));
+    },
+    /** Leaves a finished round's results for the start screen. The score was recorded when it ended. */
+    reset() {
+      if (disposed || state.status !== 'ended') return;
+      set(createRound(tuning));
+    },
     dispose() {
       disposed = true;
       stopLoop();

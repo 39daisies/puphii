@@ -101,11 +101,12 @@ describe('free features never depend on Puphii Pro', () => {
   });
 
   test('2. a free user can use Bubble Break, with no purchase prompt during it', () => {
-    for (const file of [join(ROOT, 'src', 'screens', 'BubbleBreakScreen.tsx'), ...sourceFiles(join(ROOT, 'src', 'game'))]) {
+    const playFiles = [join(ROOT, 'src', 'screens', 'BubbleBreakScreen.tsx'), join(ROOT, 'src', 'screens', 'PlayScreen.tsx'), ...sourceFiles(join(ROOT, 'src', 'game'))];
+    for (const file of playFiles) {
       assert.ok(!/\/subscription\/|useEntitlement|ProGate|Paywall|paywall/.test(readFileSync(file, 'utf8')), relative(ROOT, file));
     }
     const app = read('App.tsx');
-    assert.match(app, /\{playing \? \(\s*<BubbleBreakScreen onExit=\{\(\) => goTo\('home'\)\} \/>/);
+    assert.match(app, /\{tab === 'play' && <PlayScreen sessions=\{playSessions\} \/>\}/);
     assert.equal((app.match(/<ProEntryProvider/g) ?? []).length, 1, 'Pro is only offered inside Insights');
   });
 

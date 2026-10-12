@@ -16,21 +16,20 @@ import { AppText } from '../components/AppText';
 import { BubbleArt } from '../components/BubbleArt';
 import { IconButton, PrimaryButton, SecondaryButton } from '../components/Buttons';
 import { Card } from '../components/Card';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { usePuphii } from '../data/PuphiiStore';
 import {
   Bubble,
   bubbleLayout,
-  createRound,
-  createRoundController,
   FieldSize,
   FrameScheduler,
   placeBubble,
   POP_EFFECT_MS,
   PopEffect,
-  RoundController,
   RoundState,
   secondsLeft,
 } from '../game/bubbleBreak';
+import { createRoundSession, RoundSession } from '../game/roundSession';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 import { Mascot, MascotHandle } from '../mascot/Mascot';
 import { colors, MAX_CONTENT_WIDTH, radii, spacing } from '../theme';
@@ -50,53 +49,75 @@ const FIELD_BORDER = 1.5;
 
 type Size = FieldSize;
 
-export function BubbleBreakScreen({ onExit }: { onExit: () => void }) {
-  const { gameStats, recordGameRound } = usePuphii();
+/**
+ * The Bubble Break round, owned above the Play tab so it outlives the screen: leaving the tab
+ * pauses a round instead of losing it. Finished rounds are recorded exactly as before.
+ */
+export function useBubbleBreakSession(): RoundSession {
+  const { recordGameRound } = usePuphii();
+  const recordRef = useRef(recordGameRound);
+  recordRef.current = recordGameRound;
+  const [session] = useState(() =>
+    createRoundSession({
+      scheduler: FRAME_SCHEDULER,
+      onEnd: (score) => {
+        recordRef.current(score);
+        AccessibilityInfo.announceForAccessibility(`Round over. You popped ${pluralize(score, 'bubble')}.`);
+      },
+    }),
+  );
+  // Pausing (not disposing) can be undone, so a remount keeps a working round.
+  useEffect(() => () => session.controller.pause(), [session]);
+  return session;
+}
+
+export function BubbleBreakScreen({ session }: { session: RoundSession }) {
+  const { gameStats } = usePuphii();
   const insets = useSafeAreaInsets();
   const reduceMotion = useReducedMotion();
   const compact = useWindowDimensions().height < 700;
   const panelStyle = [styles.panel, compact && styles.panelCompact];
   const panelMascot = compact ? 64 : 88;
-  const [round, setRound] = useState<RoundState>(createRound);
+  const controller = session.controller;
+  const [round, setRound] = useState<RoundState>(controller.getState);
   const [field, setField] = useState<Size>({ width: 0, height: 0 });
-  const controllerRef = useRef<RoundController | null>(null);
+  const [confirmingEnd, setConfirmingEnd] = useState(false);
   const mascotRef = useRef<MascotHandle>(null);
   const lastCheerAt = useRef(0);
-  const recordRef = useRef(recordGameRound);
-  recordRef.current = recordGameRound;
+  const shownStatus = useRef(round.status);
 
-  // Created in an effect so the cleanup that disposes it always pairs with this instance.
-  useEffect(() => {
-    const controller = createRoundController({
-      scheduler: FRAME_SCHEDULER,
-      onChange: setRound,
-      onEnd: (score) => {
-        recordRef.current(score);
-        AccessibilityInfo.announceForAccessibility(`Round over. You popped ${pluralize(score, 'bubble')}.`);
-      },
-    });
-    controllerRef.current = controller;
-    return () => {
-      controller.dispose();
-      controllerRef.current = null;
-    };
-  }, []);
+  // Leaving the screen (another tab, or Android back) detaches it, which pauses a round in play.
+  useEffect(() => session.attach(setRound), [session]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
-      if (next !== 'active') controllerRef.current?.pause();
+      if (next !== 'active') controller.pause();
     });
     return () => subscription.remove();
-  }, []);
+  }, [controller]);
 
+  // Cheers when a round ends here, not when returning to results that were already showing.
   useEffect(() => {
-    if (round.status === 'ended') mascotRef.current?.cheer(END_CHEER_MS);
+    if (round.status === 'ended' && shownStatus.current !== 'ended') mascotRef.current?.cheer(END_CHEER_MS);
+    if (round.status !== 'paused') setConfirmingEnd(false);
+    shownStatus.current = round.status;
   }, [round.status]);
 
   const start = useCallback(() => {
     lastCheerAt.current = 0;
-    controllerRef.current?.start();
-  }, []);
+    controller.start();
+  }, [controller]);
+
+  // The clock stops while the question is open; Cancel leaves the round paused with its time intact.
+  const askToEnd = useCallback(() => {
+    controller.pause();
+    if (controller.getState().status === 'paused') setConfirmingEnd(true);
+  }, [controller]);
+
+  const endRound = useCallback(() => {
+    setConfirmingEnd(false);
+    controller.abandon();
+  }, [controller]);
 
   const cheerSometimes = useCallback(() => {
     const now = Date.now();
@@ -108,9 +129,9 @@ export function BubbleBreakScreen({ onExit }: { onExit: () => void }) {
 
   const onPop = useCallback(
     (id: number) => {
-      if (controllerRef.current?.pop(id)) cheerSometimes();
+      if (controller.pop(id)) cheerSometimes();
     },
-    [cheerSometimes],
+    [controller, cheerSometimes],
   );
 
   const fieldRef = useRef(field);
@@ -126,10 +147,10 @@ export function BubbleBreakScreen({ onExit }: { onExit: () => void }) {
       const touches = nativeEvent.changedTouches?.length ? nativeEvent.changedTouches : [nativeEvent];
       for (const touch of touches) {
         const point = { x: touch.locationX - FIELD_BORDER, y: touch.locationY - FIELD_BORDER };
-        if (controllerRef.current?.tapAt(point, size)) cheerSometimes();
+        if (controller.tapAt(point, size)) cheerSometimes();
       }
     },
-    [cheerSometimes],
+    [controller, cheerSometimes],
   );
 
   const onFieldLayout = useCallback((event: LayoutChangeEvent) => {
@@ -145,7 +166,7 @@ export function BubbleBreakScreen({ onExit }: { onExit: () => void }) {
         {inRound ? (
           <>
             <View style={styles.hud}>
-              <IconButton icon="close" accessibilityLabel="Leave Bubble Break" onPress={onExit} />
+              <IconButton icon="close" accessibilityLabel="End round" onPress={askToEnd} />
               <Stat label="Time left" value={`0:${String(secondsLeft(round)).padStart(2, '0')}`} spoken={`${secondsLeft(round)} seconds left`} />
               <Stat label="Popped" value={String(round.score)} spoken={`${pluralize(round.score, 'bubble')} popped`} />
               <Mascot ref={mascotRef} size={40} />
@@ -173,7 +194,7 @@ export function BubbleBreakScreen({ onExit }: { onExit: () => void }) {
                     <AppText variant="bodySmall" align="center">
                       Your round is on hold.
                     </AppText>
-                    <PrimaryButton label="Resume" onPress={() => controllerRef.current?.resume()} style={styles.wide} />
+                    <PrimaryButton label="Resume" onPress={controller.resume} style={styles.wide} />
                   </Card>
                 </View>
               ) : null}
@@ -181,9 +202,6 @@ export function BubbleBreakScreen({ onExit }: { onExit: () => void }) {
           </>
         ) : (
           <>
-            <View style={styles.topBar}>
-              <IconButton icon="close" accessibilityLabel="Leave Bubble Break" onPress={onExit} />
-            </View>
             <ScrollView contentContainerStyle={[styles.centered, compact && styles.centeredCompact]} showsVerticalScrollIndicator={false}>
               {round.status === 'ended' ? (
                 <Card style={panelStyle}>
@@ -208,8 +226,8 @@ export function BubbleBreakScreen({ onExit }: { onExit: () => void }) {
                     </AppText>
                   ) : null}
                   <View style={styles.actions}>
-                    <PrimaryButton label="Play again" onPress={start} />
-                    <SecondaryButton label="Back to Home" icon="home" onPress={onExit} />
+                    <PrimaryButton label="Play Again" accessibilityHint="Starts another 30-second round" onPress={start} />
+                    <SecondaryButton label="Done" accessibilityHint="Returns to the Bubble Break start screen" onPress={controller.reset} />
                   </View>
                 </Card>
               ) : (
@@ -235,6 +253,14 @@ export function BubbleBreakScreen({ onExit }: { onExit: () => void }) {
           </>
         )}
       </View>
+      <ConfirmDialog
+        visible={confirmingEnd && round.status === 'paused'}
+        title="End this round?"
+        message="This round won't be saved, and your best round stays as it is."
+        confirmLabel="End round"
+        onCancel={() => setConfirmingEnd(false)}
+        onConfirm={endRound}
+      />
     </View>
   );
 }
@@ -313,7 +339,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.md,
   },
-  topBar: { flexDirection: 'row', marginLeft: -spacing.sm },
   centered: { flexGrow: 1, justifyContent: 'center', paddingVertical: spacing.lg },
   centeredCompact: { paddingVertical: spacing.xs },
   panel: { alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xxl, borderRadius: radii.xl },

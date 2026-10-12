@@ -7,12 +7,14 @@ export const STORAGE_KEYS = {
   game: '@puphii/bubble-break-v1',
   appState: '@puphii/app-state-v1',
   schema: '@puphii/schema',
+  /** Reduction plan. Absent until a plan is first changed; a missing key means tracking only. */
+  plan: '@puphii/plan-v1',
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
 
 /** The person's own data: what "Reset everything" deletes. */
-export const USER_DATA_KEYS = [STORAGE_KEYS.logs, STORAGE_KEYS.settings, STORAGE_KEYS.savings, STORAGE_KEYS.game] as const;
+export const USER_DATA_KEYS = [STORAGE_KEYS.logs, STORAGE_KEYS.settings, STORAGE_KEYS.savings, STORAGE_KEYS.game, STORAGE_KEYS.plan] as const;
 
 /**
  * Why a copy of stored data was set aside instead of being overwritten:

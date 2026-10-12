@@ -1,4 +1,5 @@
 import { DEFAULT_GAME_STATS, GameStats, sanitizeGameStats } from '../game/gameStats';
+import { defaultPlan, PlanRecord, sanitizePlan } from '../plan/model';
 import { AppState, createAppState, sanitizeAppState } from './appState';
 import { CURRENT_SCHEMA_VERSION, Migration, RawData, readSchemaVersion, runMigrations, SchemaMarker } from './migrations';
 import { isPreserved } from './preserve';
@@ -24,6 +25,8 @@ export type LoadResult = {
   settings: Settings;
   savings: SavingsSettings;
   gameStats: GameStats;
+  /** Tracking only when no plan was ever saved. */
+  plan: PlanRecord;
   /** Null only when storage couldn't be read at all. */
   appState: AppState | null;
   /** Schema version of the data as loaded (higher than current if a newer Puphii wrote it). */
@@ -42,6 +45,7 @@ const DATA_KEYS: Record<DataName, StorageKey> = {
   savings: STORAGE_KEYS.savings,
   game: STORAGE_KEYS.game,
   appState: STORAGE_KEYS.appState,
+  plan: STORAGE_KEYS.plan,
 };
 const DATA_NAMES = Object.keys(DATA_KEYS) as DataName[];
 
@@ -121,6 +125,7 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       savings: sanitizeSavings(data.savings, options.currency),
       game: sanitizeGameStats(data.game),
       appState: sanitizeAppState(data.appState),
+      plan: sanitizePlan(data.plan),
     };
     for (const name of DATA_NAMES) {
       if (data[name] == null || isPreserved(data[name], restored[name])) continue;
@@ -145,6 +150,7 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       settings: restored.settings as Settings,
       savings: restored.savings as SavingsSettings,
       gameStats: restored.game as GameStats,
+      plan: restored.plan as PlanRecord,
       appState,
       schemaVersion: version,
       error: userDataUnreadable ? CORRUPT_DATA_MESSAGE : null,
@@ -156,6 +162,7 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       settings: { ...DEFAULT_SETTINGS },
       savings: defaultSavings(options.currency),
       gameStats: { ...DEFAULT_GAME_STATS },
+      plan: defaultPlan(),
       appState: null,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       error: READ_ERROR_MESSAGE,

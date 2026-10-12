@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { BackHandler, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import appConfig from '../../app.json';
@@ -15,15 +15,24 @@ import { Wordmark } from '../components/Wordmark';
 import { groupLogsByDay } from '../data/puffLogic';
 import { usePuphii } from '../data/PuphiiStore';
 import { REACTION_MODES, ReactionMode } from '../data/types';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 import { FACES, MODE_COPY } from '../mascot/faces';
+import { clearHistoryMessage, PLAN_SECTION_TITLE, PLAN_STATUS_LABEL, RESET_EVERYTHING_MESSAGE, YOUR_PLAN_CAPTION, YOUR_PLAN_ROW } from '../plan/copy';
+import { planStatus } from '../plan/view';
 import { cancelDailyReminder, scheduleDailyReminder } from '../services/reminders';
 import { playPuffSound, selectionHaptic } from '../services/feedback';
 import { useEntitlement } from '../subscription/EntitlementProvider';
 import { proStatusLabel } from '../subscription/paywall';
 import { colors, fontFamilies, radii, spacing } from '../theme';
 import { formatLongDate, formatTime } from '../utils/format';
+import { PlanPage } from './PlanScreen';
 
-type Page = 'main' | 'reminders' | 'data' | 'about';
+type Page = 'main' | 'plan' | 'reminders' | 'data' | 'about';
+
+/** Pages other screens can open the You tab on. */
+export type YouPage = Extract<Page, 'main' | 'plan'>;
+/** Read once when the You tab opens. */
+export const YouStartPage = createContext<YouPage>('main');
 
 const REMINDER_TIMES = [
   { hour: 9, minute: 0 },
@@ -40,7 +49,8 @@ const timeLabel = (hour: number, minute: number) => formatTime(new Date(2026, 0,
  */
 export function SettingsScreen({ footer, onOpenPro }: { footer?: React.ReactNode; onOpenPro?: () => void }) {
   const insets = useSafeAreaInsets();
-  const [page, setPage] = useState<Page>('main');
+  const startPage = useContext(YouStartPage);
+  const [page, setPage] = useState<Page>(startPage);
 
   useEffect(() => {
     if (page === 'main') return;
@@ -52,12 +62,27 @@ export function SettingsScreen({ footer, onOpenPro }: { footer?: React.ReactNode
   }, [page]);
 
   const back = () => setPage('main');
+  const scrollRef = useRef<ScrollView>(null);
+  const reducedMotion = useReducedMotion();
+  const scrollTop = useCallback(() => scrollRef.current?.scrollTo({ y: 0, animated: !reducedMotion }), [reducedMotion]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [page]);
 
   return (
     <View style={styles.root}>
       <OceanBackground variant="calm" />
-      <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top }]} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top }]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets
+      >
         {page === 'main' && <MainSettings onNavigate={setPage} onOpenPro={onOpenPro} />}
+        {page === 'plan' && <PlanPage onBack={back} onScrollTop={scrollTop} />}
         {page === 'reminders' && <RemindersPage onBack={back} />}
         {page === 'data' && <DataPage onBack={back} />}
         {page === 'about' && <AboutPage onBack={back} />}
@@ -68,7 +93,7 @@ export function SettingsScreen({ footer, onOpenPro }: { footer?: React.ReactNode
 }
 
 function MainSettings({ onNavigate, onOpenPro }: { onNavigate: (page: Page) => void; onOpenPro?: () => void }) {
-  const { settings, updateSettings } = usePuphii();
+  const { settings, updateSettings, plan } = usePuphii();
   const { entitlement } = useEntitlement();
 
   const selectMode = (mode: ReactionMode) => {
@@ -80,6 +105,11 @@ function MainSettings({ onNavigate, onOpenPro }: { onNavigate: (page: Page) => v
   return (
     <>
       <ScreenHeader title="You" />
+
+      <SectionHeader title={PLAN_SECTION_TITLE} caption={YOUR_PLAN_CAPTION} />
+      <Card style={styles.group}>
+        <NavRow icon="history" label={YOUR_PLAN_ROW} detail={PLAN_STATUS_LABEL[planStatus(plan)]} onPress={() => onNavigate('plan')} last />
+      </Card>
 
       <SectionHeader title="Reaction Mode" caption="Choose how Puphii reacts after each puff." />
       <View style={styles.modes} accessibilityRole="radiogroup">
@@ -268,7 +298,7 @@ function DataPage({ onBack }: { onBack: () => void }) {
       <View style={styles.inlineNote}>
         <Icon name="database" size={18} color={colors.textMuted} />
         <AppText variant="bodySmall" style={styles.flex}>
-          Your puff logs, settings, savings calculator details and Bubble Break scores are stored only on this device. Puphii doesn't send them
+          Your puff logs, plan, settings, savings calculator details and Bubble Break scores are stored only on this device. Puphii doesn't send them
           anywhere: there's no account, cloud sync, advertising or analytics.
           {Platform.select({
             ios: " They're excluded from iCloud and computer backups, so deleting Puphii also deletes them.",
@@ -298,7 +328,7 @@ function DataPage({ onBack }: { onBack: () => void }) {
       <ConfirmDialog
         visible={confirm === 'history'}
         title="Clear puff history?"
-        message={`All ${logs.length} logged puffs will be permanently deleted from this device. Your settings, savings calculator details and Bubble Break scores stay as they are.`}
+        message={clearHistoryMessage(logs.length)}
         confirmLabel="Clear history"
         onCancel={() => setConfirm(null)}
         onConfirm={() => {
@@ -310,7 +340,7 @@ function DataPage({ onBack }: { onBack: () => void }) {
       <ConfirmDialog
         visible={confirm === 'all'}
         title="Reset everything?"
-        message="All puff logs, savings calculator details and Bubble Break scores are deleted, settings return to their defaults and reminders are turned off."
+        message={RESET_EVERYTHING_MESSAGE}
         confirmLabel="Reset"
         onCancel={() => setConfirm(null)}
         onConfirm={() => {

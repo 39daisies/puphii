@@ -87,10 +87,11 @@ export function SecondaryButton({ label, onPress, disabled, icon, accessibilityL
   );
 }
 
-type DialogButtonProps = BaseProps & { tone?: 'neutral' | 'destructive' | 'destructiveOutline' };
+type DialogButtonProps = BaseProps & { tone?: 'neutral' | 'primary' | 'destructive' | 'destructiveOutline' };
 
 const DIALOG_TONES = {
   neutral: { container: { backgroundColor: colors.skyBlue, borderWidth: 1.5, borderColor: colors.oceanBlue }, text: colors.textPrimary },
+  primary: { container: { backgroundColor: colors.deepOcean }, text: colors.white },
   destructive: { container: { backgroundColor: colors.danger }, text: colors.white },
   destructiveOutline: { container: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.danger }, text: colors.danger },
 } as const;

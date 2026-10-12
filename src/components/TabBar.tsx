@@ -5,11 +5,12 @@ import { colors, radii, spacing } from '../theme';
 import { AppText } from './AppText';
 import { Icon, IconName } from './Icon';
 
-export type TabKey = 'home' | 'insights' | 'you';
+export type TabKey = 'home' | 'insights' | 'play' | 'you';
 
-const TABS: { key: TabKey; label: string; icon: IconName }[] = [
+export const TABS: readonly { key: TabKey; label: string; icon: IconName }[] = [
   { key: 'home', label: 'Home', icon: 'home' },
   { key: 'insights', label: 'Insights', icon: 'history' },
+  { key: 'play', label: 'Play', icon: 'gamepad' },
   { key: 'you', label: 'You', icon: 'user' },
 ];
 

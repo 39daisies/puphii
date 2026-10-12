@@ -5,12 +5,13 @@ import { useFonts } from 'expo-font';
 import { ProEntryProvider } from './src/components/ProGate';
 import { TabBar, TabKey } from './src/components/TabBar';
 import { PuphiiProvider } from './src/data/PuphiiStore';
+import { useAppSession } from './src/hooks/useAppSession';
 import { FACES } from './src/mascot/faces';
-import { BubbleBreakScreen } from './src/screens/BubbleBreakScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { INITIAL_INSIGHTS_STATE, InsightsScreen, InsightsState } from './src/screens/InsightsScreen';
 import { PaywallScreen } from './src/screens/PaywallScreen';
-import { SettingsScreen } from './src/screens/SettingsScreen';
+import { PlayScreen, usePlaySessions } from './src/screens/PlayScreen';
+import { SettingsScreen, YouPage, YouStartPage } from './src/screens/SettingsScreen';
 import { EntitlementProvider } from './src/subscription/EntitlementProvider';
 import { showPaywallEntry } from './src/subscription/paywall';
 import { colors, fontAssets } from './src/theme';
@@ -48,68 +49,71 @@ export default function App() {
 
 function AppShell() {
   const [tab, setTab] = useState<TabKey>('home');
-  // Bubble Break opens over the current tab rather than being a tab of its own.
-  const [playing, setPlaying] = useState(false);
+  const playSessions = usePlaySessions();
+  // The You tab opens on this page; any other way of arriving starts on its main list.
+  const [youPage, setYouPage] = useState<YouPage>('main');
+  const openPlan = useCallback(() => {
+    setYouPage('plan');
+    setTab('you');
+  }, []);
   const [paywallOpen, setPaywallOpen] = useState(false);
   const openPro = useCallback(() => setPaywallOpen(true), []);
   // Held here so Pause survives tab changes; deliberately not saved between launches.
   const [reefPaused, setReefPaused] = useState(false);
   const toggleReef = useCallback(() => setReefPaused((paused) => !paused), []);
+  // Hiding the goal suggestion lasts for this app session only; it comes back in a later one.
+  const session = useAppSession();
+  const [inviteHiddenIn, setInviteHiddenIn] = useState<number | null>(null);
+  const hideInvite = useCallback(() => setInviteHiddenIn(session), [session]);
   const [insights, setInsights] = useState<InsightsState>(INITIAL_INSIGHTS_STATE);
   const updateInsights = useCallback((patch: Partial<InsightsState>) => setInsights((state) => ({ ...state, ...patch })), []);
 
-  const goTo = useCallback((next: TabKey) => {
-    setPlaying(false);
-    setTab(next);
-  }, []);
-
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (playing) {
-        setPlaying(false);
-        return true;
-      }
       if (tab === 'home') return false;
       setTab('home');
       return true;
     });
     return () => subscription.remove();
-  }, [tab, playing]);
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'you') setYouPage('main');
+  }, [tab]);
 
   return (
     <View style={styles.shell}>
       <View style={styles.screen}>
-        {playing ? (
-          <BubbleBreakScreen onExit={() => goTo('home')} />
-        ) : (
-          <>
-            {tab === 'home' && (
-              <HomeScreen
-                onOpenSettings={() => setTab('you')}
-                onOpenInsights={() => {
-                  updateInsights({ section: 'overview', period: 'week', offset: 0 });
-                  setTab('insights');
-                }}
-                onOpenBubbleBreak={() => setPlaying(true)}
-                motionPaused={reefPaused}
-                onToggleMotion={toggleReef}
-              />
-            )}
-            {tab === 'insights' && (
-              <ProEntryProvider value={PRO_ENTRY ? openPro : undefined}>
-                <InsightsScreen state={insights} onChange={updateInsights} />
-              </ProEntryProvider>
-            )}
-            {tab === 'you' && (
-              <SettingsScreen
-                footer={DevTools ? <DevTools.TestStoreHarnessButton /> : undefined}
-                onOpenPro={PRO_ENTRY ? openPro : undefined}
-              />
-            )}
-          </>
+        {tab === 'home' && (
+          <HomeScreen
+            onOpenSettings={() => setTab('you')}
+            onOpenPlan={openPlan}
+            onOpenInsights={() => {
+              updateInsights({ section: 'overview', period: 'week', offset: 0 });
+              setTab('insights');
+            }}
+            motionPaused={reefPaused}
+            onToggleMotion={toggleReef}
+            inviteHidden={inviteHiddenIn === session}
+            onHideInvite={hideInvite}
+          />
+        )}
+        {tab === 'insights' && (
+          <ProEntryProvider value={PRO_ENTRY ? openPro : undefined}>
+            <InsightsScreen state={insights} onChange={updateInsights} />
+          </ProEntryProvider>
+        )}
+        {tab === 'play' && <PlayScreen sessions={playSessions} />}
+        {tab === 'you' && (
+          <YouStartPage.Provider value={youPage}>
+            <SettingsScreen
+              footer={DevTools ? <DevTools.TestStoreHarnessButton /> : undefined}
+              onOpenPro={PRO_ENTRY ? openPro : undefined}
+            />
+          </YouStartPage.Provider>
         )}
       </View>
-      <TabBar active={tab} onChange={goTo} />
+      <TabBar active={tab} onChange={setTab} />
       {PRO_ENTRY ? <PaywallScreen visible={paywallOpen} onClose={() => setPaywallOpen(false)} /> : null}
     </View>
   );

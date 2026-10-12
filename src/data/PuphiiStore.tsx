@@ -1,6 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_GAME_STATS, GameStats, recordRound } from '../game/gameStats';
+import { PlanEventListener } from '../plan/events';
+import { defaultPlan, PlanRecord } from '../plan/model';
 import { AppState } from './appState';
+import { createPlanController, PlanActions } from './planController';
 import { createLog, dayKeyOfLog, latestRecordedLog, localDayKey, removeLogById } from './puffLogic';
 import { RESET_KEYS, resetValues } from './reset';
 import { defaultSavings, deviceCurrency, SavingsSettings } from './savings';
@@ -31,6 +34,12 @@ type PuphiiStore = {
   gameStats: GameStats;
   /** Records a finished Bubble Break round and returns the updated record. */
   recordGameRound: (score: number) => GameStats;
+  /** The reduction plan, free for everyone. Tracking only until a plan is started. */
+  plan: PlanRecord;
+  /** Each returns the updated plan, or why the change couldn't be made. */
+  planActions: PlanActions;
+  /** Optional, for features such as Voice Pep Rallies. Returns a function that unsubscribes. */
+  subscribePlanEvents: (listener: PlanEventListener) => () => void;
 };
 
 const StoreContext = createContext<PuphiiStore | null>(null);
@@ -45,6 +54,7 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
   const [savings, setSavings] = useState<SavingsSettings>(() => defaultSavings(deviceCurrency()));
   const [gameStats, setGameStats] = useState<GameStats>(DEFAULT_GAME_STATS);
   const [appState, setAppState] = useState<AppState | null>(null);
+  const [plan, setPlan] = useState<PlanRecord>(defaultPlan);
   const [storageError, setStorageError] = useState<string | null>(null);
 
   // Refs are the synchronous source of truth so rapid taps never read stale state.
@@ -68,8 +78,15 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       settings: queue<Settings>(STORAGE_KEYS.settings),
       savings: queue<SavingsSettings>(STORAGE_KEYS.savings),
       game: queue<GameStats>(STORAGE_KEYS.game),
+      plan: queue<PlanRecord>(STORAGE_KEYS.plan),
     };
   }, []);
+
+  // Owns the latest plan, like the refs above, and saves every change through its queue.
+  const planController = useMemo(
+    () => createPlanController({ logs: () => logsRef.current, save: (next) => queues.plan.save(next), publish: setPlan }),
+    [queues],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -86,21 +103,23 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       setAppState(result.appState);
       setStorageError(result.error);
       canSaveRef.current = result.canSave;
+      planController.load(result.plan);
       readyRef.current = true;
       setReady(true);
     });
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [planController]);
 
   const commitLogs = useCallback(
     (next: PuffLog[]) => {
       logsRef.current = next;
       setLogs(next);
       queues.logs.save(next);
+      planController.logsChanged();
     },
-    [queues],
+    [queues, planController],
   );
 
   const addPuff = useCallback(() => {
@@ -137,8 +156,9 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
   const clearLogs = useCallback(() => {
     if (!readyRef.current) return;
     commitLogs([]);
+    planController.clearHistory();
     purgeBackups([STORAGE_KEYS.logs]);
-  }, [commitLogs, purgeBackups]);
+  }, [commitLogs, planController, purgeBackups]);
 
   const updateSettings = useCallback(
     (patch: Partial<Settings>) => {
@@ -188,8 +208,9 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     savingsRef.current = reset.savings;
     setSavings(savingsRef.current);
     queues.savings.save(savingsRef.current);
+    planController.reset();
     purgeBackups([...RESET_KEYS]);
-  }, [commitLogs, queues, purgeBackups]);
+  }, [commitLogs, queues, planController, purgeBackups]);
 
   const value = useMemo<PuphiiStore>(
     () => ({
@@ -209,6 +230,9 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       updateSavings,
       gameStats,
       recordGameRound,
+      plan,
+      planActions: planController.actions,
+      subscribePlanEvents: planController.subscribe,
     }),
     [
       ready,
@@ -217,6 +241,8 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       settings,
       savings,
       gameStats,
+      plan,
+      planController,
       storageError,
       addPuff,
       undoLatestToday,
