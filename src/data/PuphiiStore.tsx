@@ -1,8 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_GAME_STATS, GameStats, recordRound } from '../game/gameStats';
+import { PepLibrary } from '../pepRally/model';
 import { PlanEventListener } from '../plan/events';
 import { defaultPlan, PlanRecord } from '../plan/model';
 import { AppState } from './appState';
+import { createPepRallyController } from './pepRallyController';
 import { createPlanController, PlanActions } from './planController';
 import { createLog, dayKeyOfLog, latestRecordedLog, localDayKey, removeLogById } from './puffLogic';
 import { RESET_KEYS, resetValues } from './reset';
@@ -88,6 +90,16 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     [queues],
   );
 
+  // Pep Rally metadata, kept apart from logs and the plan. No screen uses it yet, and no media store is attached.
+  const pepRallyController = useMemo(() => {
+    const write = writeJson<PepLibrary>(STORAGE_KEYS.pepRallies);
+    return createPepRallyController({
+      write: (library) => write(library),
+      onSaveError: () => setStorageError(SAVE_ERROR),
+      onSaveSuccess: () => setStorageError((current) => (current === SAVE_ERROR ? null : current)),
+    });
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     loadPersistedState().then((result) => {
@@ -104,13 +116,14 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       setStorageError(result.error);
       canSaveRef.current = result.canSave;
       planController.load(result.plan);
+      pepRallyController.load(result.pepRallies, { canSave: result.canSave });
       readyRef.current = true;
       setReady(true);
     });
     return () => {
       mounted = false;
     };
-  }, [planController]);
+  }, [planController, pepRallyController]);
 
   const commitLogs = useCallback(
     (next: PuffLog[]) => {
@@ -208,9 +221,10 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     savingsRef.current = reset.savings;
     setSavings(savingsRef.current);
     queues.savings.save(savingsRef.current);
+    void pepRallyController.reset();
     planController.reset();
     purgeBackups([...RESET_KEYS]);
-  }, [commitLogs, queues, planController, purgeBackups]);
+  }, [commitLogs, queues, planController, pepRallyController, purgeBackups]);
 
   const value = useMemo<PuphiiStore>(
     () => ({

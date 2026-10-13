@@ -1,5 +1,5 @@
 /**
- * Deletion rules for future on-device voice recordings. Recordings will be files inside
+ * Deletion rules for on-device Pep Rally media. Recordings and their photos are files inside
  * one directory Puphii creates, listed by metadata in storage. Reset and delete must go
  * through `deleteRecordingFiles`: only files Puphii listed are removed, one at a time,
  * and never the directory or anything outside it.
@@ -7,7 +7,7 @@
 
 export type RecordingFile = { id: string; fileName: string };
 
-const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}\.(m4a|aac|caf|wav|mp4)$/;
+const SAFE_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}\.(m4a|aac|caf|wav|mp4|mp3|aiff|jpg|png|heic)$/;
 
 export function isSafeRecordingFileName(fileName: unknown): fileName is string {
   return typeof fileName === 'string' && SAFE_FILE_NAME.test(fileName);

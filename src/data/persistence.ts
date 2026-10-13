@@ -1,4 +1,5 @@
 import { DEFAULT_GAME_STATS, GameStats, sanitizeGameStats } from '../game/gameStats';
+import { defaultPepLibrary, PepLibrary, sanitizePepLibrary } from '../pepRally/model';
 import { defaultPlan, PlanRecord, sanitizePlan } from '../plan/model';
 import { AppState, createAppState, sanitizeAppState } from './appState';
 import { CURRENT_SCHEMA_VERSION, Migration, RawData, readSchemaVersion, runMigrations, SchemaMarker } from './migrations';
@@ -27,6 +28,8 @@ export type LoadResult = {
   gameStats: GameStats;
   /** Tracking only when no plan was ever saved. */
   plan: PlanRecord;
+  /** Empty until the first Pep Rally is saved. */
+  pepRallies: PepLibrary;
   /** Null only when storage couldn't be read at all. */
   appState: AppState | null;
   /** Schema version of the data as loaded (higher than current if a newer Puphii wrote it). */
@@ -46,6 +49,7 @@ const DATA_KEYS: Record<DataName, StorageKey> = {
   game: STORAGE_KEYS.game,
   appState: STORAGE_KEYS.appState,
   plan: STORAGE_KEYS.plan,
+  pepRallies: STORAGE_KEYS.pepRallies,
 };
 const DATA_NAMES = Object.keys(DATA_KEYS) as DataName[];
 
@@ -126,6 +130,7 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       game: sanitizeGameStats(data.game),
       appState: sanitizeAppState(data.appState),
       plan: sanitizePlan(data.plan),
+      pepRallies: sanitizePepLibrary(data.pepRallies),
     };
     for (const name of DATA_NAMES) {
       if (data[name] == null || isPreserved(data[name], restored[name])) continue;
@@ -151,6 +156,7 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       savings: restored.savings as SavingsSettings,
       gameStats: restored.game as GameStats,
       plan: restored.plan as PlanRecord,
+      pepRallies: restored.pepRallies as PepLibrary,
       appState,
       schemaVersion: version,
       error: userDataUnreadable ? CORRUPT_DATA_MESSAGE : null,
@@ -163,6 +169,7 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       savings: defaultSavings(options.currency),
       gameStats: { ...DEFAULT_GAME_STATS },
       plan: defaultPlan(),
+      pepRallies: defaultPepLibrary(),
       appState: null,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       error: READ_ERROR_MESSAGE,

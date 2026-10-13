@@ -9,12 +9,21 @@ export const STORAGE_KEYS = {
   schema: '@puphii/schema',
   /** Reduction plan. Absent until a plan is first changed; a missing key means tracking only. */
   plan: '@puphii/plan-v1',
+  /** Voice Pep Rally metadata; the media itself is in files. Absent until the first one is saved. */
+  pepRallies: '@puphii/pep-rallies-v1',
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
 
 /** The person's own data: what "Reset everything" deletes. */
-export const USER_DATA_KEYS = [STORAGE_KEYS.logs, STORAGE_KEYS.settings, STORAGE_KEYS.savings, STORAGE_KEYS.game, STORAGE_KEYS.plan] as const;
+export const USER_DATA_KEYS = [
+  STORAGE_KEYS.logs,
+  STORAGE_KEYS.settings,
+  STORAGE_KEYS.savings,
+  STORAGE_KEYS.game,
+  STORAGE_KEYS.plan,
+  STORAGE_KEYS.pepRallies,
+] as const;
 
 /**
  * Why a copy of stored data was set aside instead of being overwritten:

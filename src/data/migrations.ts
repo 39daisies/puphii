@@ -13,6 +13,8 @@ export type RawData = {
   appState: unknown;
   /** Added without a schema change: installs from before plans simply have none. */
   plan: unknown;
+  /** Added without a schema change, like plans. */
+  pepRallies: unknown;
 };
 
 export type MigrationContext = { now: Date };

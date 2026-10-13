@@ -7,7 +7,8 @@ import { DEFAULT_SETTINGS, PuffLog, Settings } from './types';
 /**
  * "Reset everything" scope. User data returns to defaults and its set-aside copies are
  * deleted. Lifecycle state and the schema marker are app records, not personal data, and
- * stay. Future recordings must be added here and deleted with `deleteRecordingFiles`.
+ * stay. Pep Rallies are reset by their controller, which also deletes their media files
+ * with `deleteRecordingFiles`.
  */
 export const RESET_KEYS = USER_DATA_KEYS;
 export const KEPT_ON_RESET = [STORAGE_KEYS.appState, STORAGE_KEYS.schema] as const;
