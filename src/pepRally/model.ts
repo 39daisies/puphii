@@ -71,6 +71,12 @@ export type PepLibrary = {
   version: number;
   rallies: PepRally[];
   updatedAt: string | null;
+  /**
+   * When "Reset everything" started, present until every Pep Rally file it covers is confirmed
+   * gone. Written with the erased library, before any file is deleted, so a reset interrupted at
+   * any point is finished at the next launch, and nothing it covered is ever offered back.
+   */
+  pendingReset?: string;
 };
 
 export const defaultPepLibrary = (): PepLibrary => ({ version: PEP_LIBRARY_VERSION, rallies: [], updatedAt: null });
@@ -202,11 +208,17 @@ export function sanitizePepLibrary(raw: unknown): PepLibrary {
     files.forEach((name) => claimed.add(name));
     rallies.push(rally);
   }
-  return withUnknownFields(raw, {
+  const library: PepLibrary = withUnknownFields(raw, {
     version: isWhole(raw.version, 1, Number.MAX_SAFE_INTEGER) ? raw.version : PEP_LIBRARY_VERSION,
     rallies,
     updatedAt: isInstant(raw.updatedAt) ? raw.updatedAt : null,
   });
+  // An unreadable marker still means a reset is unfinished, so it is repaired rather than dropped.
+  delete library.pendingReset;
+  if (raw.pendingReset != null && raw.pendingReset !== false) {
+    library.pendingReset = isInstant(raw.pendingReset) ? raw.pendingReset : new Date(0).toISOString();
+  }
+  return library;
 }
 
 /** Written by a newer Puphii: readable, but saving it here could drop what that version added. */

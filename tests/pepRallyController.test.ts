@@ -366,9 +366,17 @@ describe('Pep Rally deletion and reset', () => {
     assert.deepEqual(media.deleted, [`${STAGING_URI}stage-old.m4a`]);
   });
 
-  test("a media store pointing anywhere but Puphii's folders is refused, and nothing is touched", async () => {
+  test("a media store pointing anywhere but Puphii's folders, or saving into Documents, Caches or tmp, is refused, and nothing is touched", async () => {
     const store = new MemoryStore({ [KEY]: libraryOf(storedRally(A, { status: 'deleting' })) });
-    for (const libraryUri of ['file:///var/mobile/Containers/Data/Application/0A1B2C3D/Documents/', 'file:///var/mobile/../pep-rallies/', 'file:///pep-rallies/']) {
+    const container = 'file:///var/mobile/Containers/Data/Application/0A1B2C3D/';
+    for (const libraryUri of [
+      `${container}Documents/`,
+      'file:///var/mobile/../pep-rallies/',
+      'file:///pep-rallies/',
+      `${container}Documents/pep-rallies/`,
+      `${container}Library/Caches/pep-rallies/`,
+      `${container}tmp/pep-rallies/`,
+    ]) {
       const media = new MemoryMedia();
       media.libraryUri = libraryUri;
       const app = pepApp(cloneStore(store), null);
@@ -478,13 +486,13 @@ describe('Reset everything coordinates with work in progress', () => {
     store.writeDelay = () => 5;
     const resetting = app.controller.reset();
     app.access.current = 'pro';
-    assert.equal(app.controller.openTake(media.stage('during')), false);
+    assert.deepEqual(app.controller.openTake(media.stage('during')), { ok: false, error: 'busy' });
     assert.deepEqual(await app.controller.create(DRAFT, media.stage('during2')), { ok: false, error: 'busy' });
     app.access.current = 'free';
     assert.deepEqual(await resetting, RESET_OK);
     assert.equal(media.staging.size, 0, 'takes staged during the reset are deleted with the rest');
     const after = media.stage('after');
-    assert.ok(app.controller.openTake(after));
+    assert.deepEqual(app.controller.openTake(after), { ok: true, maxDurationMs: 30_000 });
     assert.ok((await app.controller.create(DRAFT, after)).ok);
     await app.controller.releaseTake(after);
     assert.equal(visibleRallies(app.controller.current()).length, 1);
@@ -496,11 +504,11 @@ describe('Reset everything coordinates with work in progress', () => {
     media.stage('old2', 'jpg');
     media.staging.set('keep-me.m4a', 'not a Puphii take');
     const live = media.stage('live');
-    assert.ok(app.controller.openTake(live));
+    app.access.current = 'pro';
+    assert.ok(app.controller.openTake(live).ok);
     assert.deepEqual(await app.controller.reset(), { ok: false, reason: 'filesRemain', failed: [], remaining: [live] });
     assert.deepEqual([...media.staging.keys()].sort(), ['keep-me.m4a', live]);
     assert.equal(media.library.size, 0);
-    app.access.current = 'pro';
     assert.deepEqual(await app.controller.create(DRAFT, live), { ok: false, error: 'discarded' });
     assert.ok(!media.staging.has(live), 'a take from before the reset is deleted, not saved');
     await app.controller.releaseTake(live);
@@ -513,7 +521,8 @@ describe('Reset everything coordinates with work in progress', () => {
   test('a released take from before a reset is deleted even if it was never saved', async () => {
     const { app, media } = await withOneSaved();
     const live = media.stage('live');
-    assert.ok(app.controller.openTake(live));
+    app.access.current = 'pro';
+    assert.ok(app.controller.openTake(live).ok);
     await app.controller.reset();
     assert.ok(media.staging.has(live));
     await app.controller.releaseTake(live);

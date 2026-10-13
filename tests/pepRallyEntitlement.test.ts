@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { PepActionResult } from '../src/data/pepRallyController';
+import { PepActionResult, PepTakeResult } from '../src/data/pepRallyController';
 import { maxDurationFor, PEP_ACCESS, PepAccess, pepAccessFor } from '../src/pepRally/access';
 import { AudioDraft, beginCreate, beginDelete, beginReplacement, completeCreate, CreateDraft, markPlayed, PepResult, rename, setFavorite, setTags } from '../src/pepRally/lifecycle';
 import { defaultPepLibrary, PepLibrary, visibleRallies } from '../src/pepRally/model';
@@ -40,7 +40,8 @@ const pepFor = (name: EntitlementName): PepAccess =>
   pepAccessFor(accessFor(ENTITLEMENTS[name], { gatingEnabled: true, allowMock: false }).pro, true);
 
 /** `error`, or `error/upsell` when something is offered. */
-const outcome = (result: PepResult | PepActionResult): string => (result.ok ? 'ok' : result.upsell ? `${result.error}/${result.upsell}` : result.error);
+const outcome = (result: PepResult | PepActionResult | PepTakeResult): string =>
+  result.ok ? 'ok' : result.upsell ? `${result.error}/${result.upsell}` : result.error;
 
 let sequence = 0;
 const nextId = () => `pr-${(sequence++).toString(36)}-entitled`;
@@ -218,7 +219,7 @@ describe('Pep Rallies through Free, Pro, expiry and renewal', () => {
     const { app, store, media } = await launched();
     app.access.current = 'pro';
     const take = media.stage('allowed');
-    assert.ok(app.controller.openTake(take));
+    assert.ok(app.controller.openTake(take).ok);
     app.access.current = 'free';
     assert.ok((await app.controller.create(draft(55_000, { tags: ['work'], favorite: true }), take)).ok);
     await app.controller.releaseTake(take);
@@ -432,7 +433,7 @@ describe('A recording started with verified Pro', () => {
     for (const later of ['free', 'checking'] as const) {
       app.access.current = 'pro';
       const take = media.stage(`started${later}`);
-      assert.ok(app.controller.openTake(take));
+      assert.deepEqual(app.controller.openTake(take), { ok: true, maxDurationMs: 60_000 });
       app.access.current = later;
       assert.equal(outcome(await app.controller.create(draft(58_000, { tags: ['work'] }), take)), 'ok', later);
       await app.controller.releaseTake(take);
@@ -441,23 +442,28 @@ describe('A recording started with verified Pro', () => {
 
     app.access.current = 'pro';
     const hidden = media.stage('hidden');
-    assert.ok(app.controller.openTake(hidden));
+    assert.ok(app.controller.openTake(hidden).ok);
     app.access.current = 'unavailable';
     assert.equal(outcome(await app.controller.create(draft(20_000), hidden)), 'unavailable', 'a hidden paywall always wins');
 
     const full = await launched({ [KEY]: fullLibrary(50) });
     full.app.access.current = 'pro';
-    const take = full.media.stage('fifty');
-    assert.ok(full.app.controller.openTake(take));
-    full.app.access.current = 'free';
-    assert.equal(outcome(await full.app.controller.create(draft(20_000), take)), 'libraryFull');
+    assert.deepEqual(full.app.controller.openTake(full.media.stage('fifty')), { ok: false, error: 'libraryFull' }, 'no recording starts');
+
+    const almost = await launched({ [KEY]: fullLibrary(49) });
+    almost.app.access.current = 'pro';
+    const last = almost.media.stage('last');
+    assert.ok(almost.app.controller.openTake(last).ok);
+    assert.ok((await record(almost.app)).ok, 'something else fills the 50th place meanwhile');
+    almost.app.access.current = 'free';
+    assert.equal(outcome(await almost.app.controller.create(draft(20_000), last)), 'libraryFull');
   });
 
   test('covers one attempt only: it is used up by a failed save, a successful save or cancelling', async () => {
     const { app, media } = await launched();
     app.access.current = 'pro';
     const failing = media.stage('failing');
-    assert.ok(app.controller.openTake(failing));
+    assert.ok(app.controller.openTake(failing).ok);
     app.access.current = 'free';
     assert.equal(outcome(await app.controller.create(draft(58_000, { title: ' ' }), failing)), 'invalidTitle');
     assert.equal(outcome(await app.controller.create(draft(58_000), failing)), 'tooLong/upgrade', 'a retry gets current access');
@@ -465,7 +471,7 @@ describe('A recording started with verified Pro', () => {
 
     app.access.current = 'pro';
     const saving = media.stage('saving');
-    assert.ok(app.controller.openTake(saving));
+    assert.ok(app.controller.openTake(saving).ok);
     app.access.current = 'free';
     assert.ok((await app.controller.create(draft(58_000), saving)).ok);
     media.stage('saving');
@@ -474,32 +480,47 @@ describe('A recording started with verified Pro', () => {
 
     app.access.current = 'pro';
     const cancelled = media.stage('cancelled');
-    assert.ok(app.controller.openTake(cancelled));
+    assert.ok(app.controller.openTake(cancelled).ok);
     await app.controller.releaseTake(cancelled);
     app.access.current = 'free';
-    assert.ok(app.controller.openTake(cancelled), 'opened again, as a new attempt');
+    assert.equal(outcome(app.controller.openTake(cancelled)), 'limitReached/resubscribe', 'opening it again is a new attempt, with no allowance');
     assert.equal(outcome(await app.controller.create(draft(20_000), cancelled)), 'limitReached/resubscribe');
   });
 
-  test('a take started while checking, unknown, failed, unavailable or Free never gets Pro limits', async () => {
-    const starts: PepAccess[] = ['checking', pepFor('unknown'), pepFor('error'), 'unavailable', 'free'];
-    for (const start of starts) {
+  test('no take can be opened while access is checking, unknown, failed or unavailable, so no recording starts', async () => {
+    const starts: [PepAccess, string][] = [
+      ['checking', 'checking'],
+      [pepFor('unknown'), 'checking'],
+      [pepFor('error'), 'checking'],
+      ['unavailable', 'unavailable'],
+    ];
+    for (const [start, error] of starts) {
       const { app, media } = await launched();
       app.access.current = start;
-      const take = media.stage('nopro');
-      assert.ok(app.controller.openTake(take));
-      app.access.current = 'free';
-      assert.equal(outcome(await app.controller.create(draft(45_000), take)), 'tooLong/upgrade', start);
-      app.access.current = 'checking';
-      assert.equal(outcome(await app.controller.create(draft(45_000), take)), 'checking', start);
+      assert.deepEqual(app.controller.openTake(media.stage('nopro')), { ok: false, error });
     }
+  });
+
+  test('a take opened on Free stays a 30-second take, even after upgrading during the attempt', async () => {
+    const { app, media } = await launched();
+    app.access.current = 'free';
+    const take = media.stage('freetake');
+    assert.deepEqual(app.controller.openTake(take), { ok: true, maxDurationMs: 30_000 });
+    app.access.current = 'pro';
+    assert.equal(outcome(await app.controller.create(draft(45_000), take)), 'tooLong', 'the upgrade does not lengthen this take');
+    app.access.current = 'checking';
+    assert.equal(outcome(await app.controller.create(draft(20_000), take)), 'checking');
+    app.access.current = 'free';
+    assert.equal(outcome(await app.controller.create(draft(45_000), take)), 'tooLong/upgrade');
+    app.access.current = 'pro';
+    assert.ok((await app.controller.create(draft(30_500), take)).ok, 'up to its limit plus the recorder tolerance');
   });
 
   test('lives in memory only: after a restart, current access applies to the same take', async () => {
     const { app, store, media } = await launched();
     app.access.current = 'pro';
     const take = media.stage('restart');
-    assert.ok(app.controller.openTake(take));
+    assert.ok(app.controller.openTake(take).ok);
     await app.controller.flush();
     assert.ok(!(store.data.get(KEY) ?? '').includes('restart'), 'nothing about the take is stored');
 
@@ -507,7 +528,7 @@ describe('A recording started with verified Pro', () => {
     await next.launch({ recover: false });
     next.access.current = 'free';
     assert.equal(outcome(await next.controller.create(draft(45_000), take)), 'tooLong/upgrade');
-    assert.ok(next.controller.openTake(take));
+    assert.deepEqual(next.controller.openTake(take), { ok: true, maxDurationMs: 30_000 });
     assert.equal(outcome(await next.controller.create(draft(45_000), take)), 'tooLong/upgrade');
   });
 });

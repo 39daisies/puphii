@@ -45,8 +45,17 @@ export type PepError =
   | 'proRequired'
   | 'saveFailed'
   | 'mediaFailed'
-  /** The take was recorded before "Reset everything", so it was deleted instead of saved. */
+  /** The saved file couldn't be confirmed as excluded from backups, so the save wasn't finished. */
+  | 'notProtected'
+  /** The take was opened for a different action or recording, or its file is no longer the recording it saved before. */
+  | 'takeMismatch'
+  /** The file couldn't be confirmed as the recording that was made, so it wasn't saved. */
+  | 'mediaUnverified'
+  /** The take or file was there before "Reset everything", so it was deleted instead of saved. */
   | 'discarded';
+
+/** Storage failures where trying the same take again can succeed. Every other failure is final for that attempt. */
+export const RETRYABLE_ERRORS: readonly PepError[] = ['saveFailed', 'mediaFailed', 'notProtected'];
 
 /** `upsell` is present only when verified Free access is what stood in the way. */
 export type PepFailure = { ok: false; error: PepError; upsell?: PepUpsell };
@@ -110,15 +119,18 @@ function photoError(draft: PhotoDraft): PepError | null {
   return isPhotoExtension(draft.extension) && side(draft.width) && side(draft.height) ? null : 'invalidPhoto';
 }
 
-/** Step 1 of saving: records the new rally as pending. Its audio file is moved into place next. */
-export function beginCreate(library: PepLibrary, id: string, draft: CreateDraft, access: PepAccess, at: Date): PepResult {
+/**
+ * Step 1 of saving: records the new rally as pending. Its audio file is moved into place next.
+ * `takeLimitMs` is the length the take was opened with; it can lower the tier's limit, never raise it.
+ */
+export function beginCreate(library: PepLibrary, id: string, draft: CreateDraft, access: PepAccess, at: Date, takeLimitMs?: number): PepResult {
   if (!isPepRallyId(id) || findRally(library, id)) return fail('busy');
   const title = normalizeTitle(draft.title);
   if (!title) return fail('invalidTitle');
   if (draft.voice === 'someoneElse' && draft.consentConfirmed !== true) return fail('consentRequired');
   const allowed = canCreate(library, access);
   if (!allowed.ok) return deny(allowed);
-  const problem = audioFailure(library, draft.audio, allowed.maxDurationMs, access);
+  const problem = audioFailure(library, draft.audio, Math.min(allowed.maxDurationMs, takeLimitMs ?? Infinity), access);
   if (problem) return problem;
   const tags = normalizeTags(draft.tags ?? []);
   if (!tags) return fail('invalidTags');
@@ -161,6 +173,12 @@ export function completeCreate(library: PepLibrary, id: string, at: Date): PepRe
 export function abandonCreate(library: PepLibrary, id: string, at: Date): PepLibrary {
   const rally = findRally(library, id);
   return rally?.status === 'pending' ? update(library, id, at, () => null) : library;
+}
+
+/** A save that won't be finished although its audio may be in place: the rally is deleted with its file. */
+export function discardCreate(library: PepLibrary, id: string, at: Date): PepLibrary {
+  const rally = findRally(library, id);
+  return rally?.status === 'pending' ? update(library, id, at, (current) => ({ ...current, status: 'deleting' })) : library;
 }
 
 export function rename(library: PepLibrary, id: string, title: string, at: Date): PepResult {
@@ -208,7 +226,14 @@ export function setFavorite(library: PepLibrary, id: string, favorite: boolean, 
  * current tier's length limit, and without Pro only a library within the Free allowance can be
  * re-recorded; a new photo needs Pro. The current media stays in use until step 2.
  */
-export function beginReplacement(library: PepLibrary, id: string, draft: ReplacementDraft, access: PepAccess, at: Date): PepResult {
+export function beginReplacement(
+  library: PepLibrary,
+  id: string,
+  draft: ReplacementDraft,
+  access: PepAccess,
+  at: Date,
+  takeLimitMs?: number,
+): PepResult {
   const rally = visible(library, id);
   if (typeof rally === 'string') return fail(rally);
   if (rally.replacing) return fail('busy');
@@ -222,7 +247,7 @@ export function beginReplacement(library: PepLibrary, id: string, draft: Replace
   if (draft.audio) {
     const allowed = canReplaceAudio(library, access);
     if (!allowed.ok) return deny(allowed);
-    const problem = audioFailure(library, draft.audio, allowed.maxDurationMs, access);
+    const problem = audioFailure(library, draft.audio, Math.min(allowed.maxDurationMs, takeLimitMs ?? Infinity), access);
     if (problem) return problem;
   }
   const revision = rally.revision + 1;
@@ -327,13 +352,21 @@ function erased(rally: PepRally, stamp: string): PepRally {
 
 /**
  * "Reset everything": every rally, including one still being saved, is marked for deletion,
- * and its title, tags and other details are erased at once rather than when its files go.
+ * and its title, tags and other details are erased at once rather than when its files go. The
+ * reset is marked as pending in the same change, until `endReset`.
  */
 export function beginReset(library: PepLibrary, at: Date): PepLibrary {
   const stamp = at.toISOString();
   const rallies = library.rallies.map((rally) => erased(rally, rally.status === 'deleting' ? rally.updatedAt : stamp));
-  if (JSON.stringify(rallies) === JSON.stringify(library.rallies)) return library;
-  return { ...library, rallies, updatedAt: stamp };
+  if (library.pendingReset && JSON.stringify(rallies) === JSON.stringify(library.rallies)) return library;
+  return { ...library, rallies, updatedAt: stamp, pendingReset: library.pendingReset ?? stamp };
+}
+
+/** Every file the reset covered is confirmed gone. */
+export function endReset(library: PepLibrary): PepLibrary {
+  if (library.pendingReset === undefined) return library;
+  const { pendingReset: _done, ...rest } = library;
+  return rest;
 }
 
 export type OwnedFile = { id: string; fileName: string };

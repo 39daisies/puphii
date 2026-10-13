@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { loadFrom } from '../../src/data/persistence';
 import { createPepRallyController } from '../../src/data/pepRallyController';
 import { STORAGE_KEYS } from '../../src/data/storageKeys';
@@ -9,7 +10,7 @@ import { PepLibrary, PepRally } from '../../src/pepRally/model';
 import { MemoryStore } from '../plan/storeHarness';
 
 const CONTAINER = 'file:///var/mobile/Containers/Data/Application/0A1B2C3D/';
-export const LIBRARY_URI = `${CONTAINER}Documents/pep-rallies/`;
+export const LIBRARY_URI = `${CONTAINER}Library/Application%20Support/com.puphii.app/pep-rallies/`;
 export const STAGING_URI = `${CONTAINER}Library/Caches/pep-rally-staging/`;
 export const KEY = STORAGE_KEYS.pepRallies;
 
@@ -30,6 +31,20 @@ export class MemoryMedia implements PepMediaStore {
   failList = false;
   beforeAdopt: (() => Promise<void> | void) | null = null;
   afterAdopt: (() => Promise<void> | void) | null = null;
+  /** The library folder's own backup setting. Never proof for the files inside it. */
+  folderExcluded = true;
+  /** Files whose read-back says they are not excluded from backups. */
+  failExclusion = new Set<string>();
+  /** When set, returned for every file instead of a real answer, or thrown if it is an Error. */
+  exclusionAnswer: unknown = undefined;
+  /** Every name the controller asked to exclude, in order. */
+  readonly exclusionChecks: string[] = [];
+  /** Files confirmed, by their own read-back, as excluded from backups. */
+  readonly excluded = new Set<string>();
+  /** When set, returned for every fingerprint instead of the real one, or thrown if it is an Error. */
+  fingerprintAnswer: unknown = undefined;
+  /** Every `folder/name` the controller asked to fingerprint, in order. */
+  readonly fingerprintChecks: string[] = [];
 
   async listLibrary() {
     if (this.failList) throw new Error('unreadable');
@@ -62,7 +77,24 @@ export class MemoryMedia implements PepMediaStore {
     if (this.failDelete.has(name)) throw new Error('busy');
     this.deleted.push(uri);
     folder.delete(name);
+    this.excluded.delete(name);
     if (this.failAfterDelete.delete(name)) throw new Error('late failure');
+  }
+  async excludeFromBackup(fileName: string) {
+    this.exclusionChecks.push(fileName);
+    if (this.exclusionAnswer instanceof Error) throw this.exclusionAnswer;
+    if (this.exclusionAnswer !== undefined) return this.exclusionAnswer as boolean;
+    if (!this.library.has(fileName) || this.failExclusion.has(fileName)) return false;
+    this.excluded.add(fileName);
+    return true;
+  }
+  async fingerprint(folder: 'staging' | 'library', fileName: string): Promise<string> {
+    this.fingerprintChecks.push(`${folder}/${fileName}`);
+    if (this.fingerprintAnswer instanceof Error) throw this.fingerprintAnswer;
+    if (this.fingerprintAnswer !== undefined) return this.fingerprintAnswer as string;
+    const content = (folder === 'library' ? this.library : this.staging).get(fileName);
+    if (content === undefined) throw new Error('no such file');
+    return createHash('sha256').update(content).digest('hex');
   }
 
   stage(token: string, extension: 'm4a' | 'jpg' = 'm4a', content = `staged ${token}`) {
@@ -75,6 +107,7 @@ export class MemoryMedia implements PepMediaStore {
     const copy = new MemoryMedia();
     for (const [name, content] of this.library) copy.library.set(name, content);
     for (const [name, content] of this.staging) copy.staging.set(name, content);
+    for (const name of this.excluded) copy.excluded.add(name);
     return copy;
   }
 }

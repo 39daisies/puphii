@@ -4,9 +4,9 @@
  * ever point at a file directly inside Puphii's own media folder.
  */
 
-/** Saved audio and photos, inside the app's document directory. */
+/** Saved audio and photos, in an app-private folder excluded from device backups. */
 export const PEP_MEDIA_DIRECTORY = 'pep-rallies';
-/** Takes and imports before they are saved, inside the app's cache directory. */
+/** Takes and imports before they are saved. */
 export const PEP_STAGING_DIRECTORY = 'pep-rally-staging';
 
 export const AUDIO_EXTENSIONS = ['m4a', 'aac', 'caf', 'wav', 'mp3', 'aiff'] as const;
@@ -79,3 +79,10 @@ export function isPepDirectoryUri(uri: unknown, name: string): uri is string {
   const segments = uri.slice('file:///'.length, -1).split('/');
   return segments.length >= 2 && segments.every((segment) => segment !== '' && segment !== '.' && segment !== '..');
 }
+
+/** Documents is backed up, and the system may empty Caches and tmp, so saved media never goes there. */
+const UNSUITABLE_MEDIA_PARENT = /\/(documents|library\/caches|tmp)\//i;
+
+/** A folder saved media may live in: Puphii's own media folder, and nowhere backed up or purgeable. */
+export const isSavedMediaUri = (uri: unknown): uri is string =>
+  isPepDirectoryUri(uri, PEP_MEDIA_DIRECTORY) && !UNSUITABLE_MEDIA_PARENT.test(uri);
