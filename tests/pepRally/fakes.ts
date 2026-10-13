@@ -1,6 +1,7 @@
 import { loadFrom } from '../../src/data/persistence';
 import { createPepRallyController } from '../../src/data/pepRallyController';
 import { STORAGE_KEYS } from '../../src/data/storageKeys';
+import { PepAccess } from '../../src/pepRally/access';
 import { mediaFileName, stagedFileName } from '../../src/pepRally/files';
 import { CreateDraft } from '../../src/pepRally/lifecycle';
 import { PepMediaStore } from '../../src/pepRally/media';
@@ -106,11 +107,14 @@ export const sequentialIds = () => {
 export function pepApp(store: MemoryStore, media: MemoryMedia | null = new MemoryMedia(), clock = { now: NOW }) {
   const errors: unknown[] = [];
   const io = { failWrites: false };
+  /** Subscription status as the app would report it right now; tests change it mid-way. */
+  const access = { current: 'free' as PepAccess };
   const controller = createPepRallyController({
     write: (library) => (io.failWrites ? Promise.reject(new Error('disk full')) : store.setItem(KEY, JSON.stringify(library))),
     onSaveError: (error) => errors.push(error),
     now: () => clock.now,
     newId: sequentialIds(),
+    access: () => access.current,
   });
   return {
     controller,
@@ -118,6 +122,7 @@ export function pepApp(store: MemoryStore, media: MemoryMedia | null = new Memor
     errors,
     io,
     clock,
+    access,
     async launch({ recover = true } = {}) {
       const result = await loadFrom(store, { currency: 'USD', now: clock.now });
       controller.load(result.pepRallies, { canSave: result.canSave });

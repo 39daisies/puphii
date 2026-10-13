@@ -22,6 +22,7 @@ import {
   forgetFiles,
   markPlayed,
   PepError,
+  PepFailure,
   PepResult,
   removePhoto,
   rename,
@@ -29,14 +30,14 @@ import {
   setFavorite,
   setTags,
 } from '../pepRally/lifecycle';
+import { isPepAccess, PepAccess } from '../pepRally/access';
 import type { PepMediaStore } from '../pepRally/media';
 import { defaultPepLibrary, filesOf, findRally, isNewerLibrary, PepLibrary, PepRally, PepTag } from '../pepRally/model';
 import { emptyRecoveryReport, PepRecoveryReport, recoverLibrary } from '../pepRally/recovery';
-import type { ProAccess } from '../subscription/entitlement';
 import { deleteRecordingFiles } from './recordings';
 import { createWriteQueue } from './writeQueue';
 
-export type PepActionResult = { ok: true; rally: PepRally | null } | { ok: false; error: PepError };
+export type PepActionResult = { ok: true; rally: PepRally | null } | PepFailure;
 export type PepCleanupResult = { ok: boolean; failed: string[] };
 
 /** Why "Reset everything" could not confirm that every Pep Rally file and detail is gone. */
@@ -57,6 +58,18 @@ export type PepRallyControllerOptions = {
   onSaveSuccess?: () => void;
   now?: () => Date;
   newId?: (at: Date) => string;
+  /** Current Pep Rally access, read whenever an action depends on it. Until one is connected, access is `checking`. */
+  access?: () => PepAccess;
+};
+
+type OpenTake = {
+  /** The reset count when the take was opened. */
+  opened: number;
+  /**
+   * Opened with verified Pro: its first save may use Pro limits even if Pro has ended since.
+   * Used up by that attempt, whatever its result, or by releasing the take. Never stored.
+   */
+  proAllowance: boolean;
 };
 
 /**
@@ -78,8 +91,9 @@ export function createPepRallyController(options: PepRallyControllerOptions) {
   const inFlight = new Set<string>();
   // Staged takes a running save is moving. Clearing the staging folder leaves them alone.
   const busyStaged = new Set<string>();
-  // Takes a recording session or import has open, with the reset count when each was opened.
-  const takes = new Map<string, number>();
+  // Takes a recording session or import has open.
+  const takes = new Map<string, OpenTake>();
+  let accessSource = options.access ?? null;
   // Saves, replacements and recoveries still running, which a reset waits for.
   const operations = new Set<Promise<unknown>>();
   let resets = 0;
@@ -118,6 +132,28 @@ export function createPepRallyController(options: PepRallyControllerOptions) {
     return null;
   }
 
+  /** Read at the moment an action runs, never taken from the caller. Anything unexpected counts as `checking`. */
+  function currentAccess(): PepAccess {
+    try {
+      const access = accessSource?.();
+      return isPepAccess(access) ? access : 'checking';
+    } catch {
+      return 'checking';
+    }
+  }
+
+  /**
+   * Access for saving these takes, using up their allowances: Pro if every one was opened with
+   * verified Pro, otherwise current access. Never Pro where Pep Rallies are unavailable.
+   */
+  function accessForTakes(names: readonly (string | undefined)[]): PepAccess {
+    const open = names.filter((name): name is string => !!name).map((name) => takes.get(name));
+    const allowed = open.length > 0 && open.every((take) => take?.proAllowance === true);
+    for (const take of open) if (take) take.proAllowance = false;
+    const current = currentAccess();
+    return allowed && current !== 'unavailable' ? 'pro' : current;
+  }
+
   const fail = (error: PepError): PepActionResult => ({ ok: false, error });
   const succeed = (id: string | null): PepActionResult => ({ ok: true, rally: id ? (findRally(library, id) ?? null) : null });
 
@@ -140,8 +176,8 @@ export function createPepRallyController(options: PepRallyControllerOptions) {
 
   /** Opened before the latest reset, so it must not be saved. */
   const isStaleTake = (name: string | undefined): boolean => {
-    const opened = name === undefined ? undefined : takes.get(name);
-    return opened !== undefined && opened < resets;
+    const take = name === undefined ? undefined : takes.get(name);
+    return take !== undefined && take.opened < resets;
   };
 
   async function deleteStaged(store: PepMediaStore, names: readonly string[]) {
@@ -235,6 +271,11 @@ export function createPepRallyController(options: PepRallyControllerOptions) {
       options.publish?.(loaded);
     },
 
+    /** Connects where current access comes from, replacing any earlier source. */
+    connectAccess(source: (() => PepAccess) | null) {
+      accessSource = source;
+    },
+
     /** Connects device storage. Refused unless both folders are Puphii's own. */
     attachMedia(store: PepMediaStore): boolean {
       if (!isPepDirectoryUri(store.libraryUri, PEP_MEDIA_DIRECTORY) || !isPepDirectoryUri(store.stagingUri, PEP_STAGING_DIRECTORY)) return false;
@@ -244,15 +285,16 @@ export function createPepRallyController(options: PepRallyControllerOptions) {
 
     /**
      * A recording session or import is about to write this staged take. Until it is released,
-     * clearing the staging folder leaves it alone. Refused while a reset is running.
+     * clearing the staging folder leaves it alone. Refused while a reset is running. Whether
+     * access is verified Pro is captured now, for this take only.
      */
     openTake(stagedName: string): boolean {
       if (!ready || resetting || !isStagedFileName(stagedName) || takes.has(stagedName)) return false;
-      takes.set(stagedName, resets);
+      takes.set(stagedName, { opened: resets, proAllowance: currentAccess() === 'pro' });
       return true;
     },
 
-    /** The session is over, saved or not. A take opened before a reset is deleted now. */
+    /** The session is over, saved, discarded or cancelled. A take opened before a reset is deleted now. */
     async releaseTake(stagedName: string): Promise<void> {
       const stale = isStaleTake(stagedName);
       takes.delete(stagedName);
@@ -289,15 +331,16 @@ export function createPepRallyController(options: PepRallyControllerOptions) {
       );
     },
 
-    /** Saves a staged take or import as a new rally. */
-    async create(draft: CreateDraft, stagedName: string, pro: ProAccess): Promise<PepActionResult> {
+    /** Saves a staged take or import as a new rally, with Pro limits only if the take was opened with Pro or access is Pro now. */
+    async create(draft: CreateDraft, stagedName: string): Promise<PepActionResult> {
+      const access = accessForTakes([stagedName]);
       const problem = blocked(true) ?? (recovering || resetting ? 'busy' : null);
       if (problem) return fail(problem);
       if (!isStagedFileName(stagedName)) return fail('invalidAudio');
       if (isStaleTake(stagedName)) return discard([stagedName]);
       const at = now();
       const id = newId(at);
-      const begun = beginCreate(library, id, draft, pro, at);
+      const begun = beginCreate(library, id, draft, access, at);
       if (!begun.ok) return begun;
       const fileName = begun.rally!.audio.fileName;
       const store = media as PepMediaStore;
@@ -328,14 +371,15 @@ export function createPepRallyController(options: PepRallyControllerOptions) {
     },
 
     /** Swaps in new audio, a new photo, or both. The old files are deleted once the new ones are saved. */
-    async replace(id: string, draft: ReplacementDraft, staged: { audio?: string; photo?: string }, pro: ProAccess): Promise<PepActionResult> {
+    async replace(id: string, draft: ReplacementDraft, staged: { audio?: string; photo?: string }): Promise<PepActionResult> {
+      const access = accessForTakes([staged.audio, staged.photo]);
       const problem = blocked(true) ?? (recovering || resetting || inFlight.has(id) ? 'busy' : null);
       if (problem) return fail(problem);
       if (!!draft.audio !== isStagedFileName(staged.audio) || !!draft.photo !== isStagedFileName(staged.photo)) {
         return fail(draft.audio ? 'invalidAudio' : 'invalidPhoto');
       }
       if (isStaleTake(staged.audio) || isStaleTake(staged.photo)) return discard([staged.audio, staged.photo]);
-      const begun = beginReplacement(library, id, draft, pro, now());
+      const begun = beginReplacement(library, id, draft, access, now());
       if (!begun.ok) return begun;
       const target = begun.rally!.replacing!;
       const store = media as PepMediaStore;
@@ -370,9 +414,8 @@ export function createPepRallyController(options: PepRallyControllerOptions) {
 
     rename: (id: string, title: string) => metadataChange((current, at) => rename(current, id, title, at)),
     markPlayed: (id: string) => metadataChange((current, at) => markPlayed(current, id, at)),
-    setTags: (id: string, tags: readonly PepTag[], pro: ProAccess) => metadataChange((current, at) => setTags(current, id, tags, pro, at)),
-    setFavorite: (id: string, favorite: boolean, pro: ProAccess) =>
-      metadataChange((current, at) => setFavorite(current, id, favorite, pro, at)),
+    setTags: (id: string, tags: readonly PepTag[]) => metadataChange((current, at) => setTags(current, id, tags, currentAccess(), at)),
+    setFavorite: (id: string, favorite: boolean) => metadataChange((current, at) => setFavorite(current, id, favorite, currentAccess(), at)),
 
     async removePhoto(id: string): Promise<PepActionResult> {
       const problem = blocked(false) ?? (inFlight.has(id) ? 'busy' : null);

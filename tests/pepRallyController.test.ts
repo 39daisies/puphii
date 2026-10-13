@@ -16,7 +16,7 @@ const NEW_AUDIO = { extension: 'm4a', durationMs: 12_000, byteSize: 1 } as const
 async function withOneSaved(store = new MemoryStore(), media = new MemoryMedia()) {
   const app = pepApp(store, media);
   await app.launch();
-  const result = await app.controller.create(DRAFT, media.stage('take1'), 'denied');
+  const result = await app.controller.create(DRAFT, media.stage('take1'));
   assert.ok(result.ok);
   return { app, store, media, id: result.rally!.id };
 }
@@ -88,8 +88,9 @@ describe('Pep Rally persistence', () => {
     const app = pepApp(store, media);
     await app.launch();
     assert.equal(visibleRallies(app.controller.current()).length, 1);
+    app.access.current = 'pro';
     assert.deepEqual(app.controller.rename(A, 'x'), { ok: false, error: 'readOnly' });
-    assert.deepEqual(await app.controller.create(DRAFT, media.stage('t'), 'granted'), { ok: false, error: 'readOnly' });
+    assert.deepEqual(await app.controller.create(DRAFT, media.stage('t')), { ok: false, error: 'readOnly' });
     assert.equal(store.data.get(KEY), before);
   });
 
@@ -115,7 +116,7 @@ describe('Pep Rally persistence', () => {
     await app.launch();
     app.io.failWrites = true;
     const staged = media.stage('take1');
-    assert.deepEqual(await app.controller.create(DRAFT, staged, 'denied'), { ok: false, error: 'saveFailed' });
+    assert.deepEqual(await app.controller.create(DRAFT, staged), { ok: false, error: 'saveFailed' });
     assert.equal(media.library.size, 0);
     assert.ok(media.staging.has(staged), 'the take is still there to try again');
     assert.deepEqual(app.controller.current().rallies, []);
@@ -130,7 +131,7 @@ describe('Pep Rally persistence', () => {
     media.beforeAdopt = () => {
       for (const name of app.controller.current().rallies.map((rally) => rally.audio.fileName)) media.library.set(name, 'older file');
     };
-    assert.deepEqual(await app.controller.create(DRAFT, media.stage('take1'), 'denied'), { ok: false, error: 'mediaFailed' });
+    assert.deepEqual(await app.controller.create(DRAFT, media.stage('take1')), { ok: false, error: 'mediaFailed' });
     assert.deepEqual([...media.library.values()], ['older file']);
     assert.deepEqual(app.controller.current().rallies, [], 'the save is undone');
   });
@@ -147,7 +148,7 @@ describe('Pep Rally crash recovery', () => {
       if (key === KEY && !crash) crash = { store: cloneStore(store), media: media.clone() };
       return 0;
     };
-    await app.controller.create(DRAFT, media.stage('take1'), 'denied');
+    await app.controller.create(DRAFT, media.stage('take1'));
     const after = await relaunch(crash!.store, crash!.media);
     assert.deepEqual(after.controller.current().rallies, []);
     assert.equal(crash!.store.data.has(KEY), false);
@@ -163,7 +164,7 @@ describe('Pep Rally crash recovery', () => {
     media.beforeAdopt = () => {
       crash = [cloneStore(store), media.clone()];
     };
-    await app.controller.create(DRAFT, media.stage('take1'), 'denied');
+    await app.controller.create(DRAFT, media.stage('take1'));
     assert.equal(crash![0].json(KEY).rallies[0].status, 'pending');
     const after = await relaunch(...crash!);
     assert.deepEqual(after.controller.current().rallies, []);
@@ -181,7 +182,7 @@ describe('Pep Rally crash recovery', () => {
     media.afterAdopt = () => {
       crash = [cloneStore(store), media.clone()];
     };
-    await app.controller.create(DRAFT, media.stage('take1'), 'denied');
+    await app.controller.create(DRAFT, media.stage('take1'));
     const after = await relaunch(...crash!);
     const [rally] = after.controller.current().rallies;
     assert.equal(rally.status, 'ready');
@@ -199,7 +200,7 @@ describe('Pep Rally crash recovery', () => {
     media.afterAdopt = () => {
       afterMove = [cloneStore(store), media.clone()];
     };
-    const replaced = await app.controller.replace(id, { audio: { extension: 'm4a', durationMs: 12_000, byteSize: 1 } }, { audio: media.stage('take2') }, 'denied');
+    const replaced = await app.controller.replace(id, { audio: { extension: 'm4a', durationMs: 12_000, byteSize: 1 } }, { audio: media.stage('take2') });
     assert.ok(replaced.ok);
     assert.deepEqual([...media.library.keys()], [`${id}-a2.m4a`], 'the old file is deleted once the new one is saved');
 
@@ -373,8 +374,9 @@ describe('Pep Rally deletion and reset', () => {
       const app = pepApp(cloneStore(store), null);
       await app.launch();
       assert.equal(app.controller.attachMedia(media), false, libraryUri);
+      app.access.current = 'pro';
       assert.deepEqual(await app.controller.recover(), { ok: false, error: 'noMediaStore' });
-      assert.deepEqual(await app.controller.create(DRAFT, media.stage('t'), 'granted'), { ok: false, error: 'noMediaStore' });
+      assert.deepEqual(await app.controller.create(DRAFT, media.stage('t')), { ok: false, error: 'noMediaStore' });
       await app.controller.reset();
       assert.equal(media.deleted.length + media.outside.length, 0);
     }
@@ -387,6 +389,7 @@ describe('Reset everything coordinates with work in progress', () => {
     const media = new MemoryMedia();
     const app = pepApp(store, media);
     await app.launch();
+    app.access.current = 'pro';
     const order: string[] = [];
     let resetting = null as Promise<PepResetResult> | null;
     media.beforeAdopt = async () => {
@@ -397,9 +400,9 @@ describe('Reset everything coordinates with work in progress', () => {
       });
       await app.controller.flush();
       assert.equal(app.stored()!.rallies[0].status, 'deleting', 'the reset is saved before the file moves');
-      assert.deepEqual(await app.controller.create(DRAFT, media.stage('take2'), 'granted'), { ok: false, error: 'busy' });
+      assert.deepEqual(await app.controller.create(DRAFT, media.stage('take2')), { ok: false, error: 'busy' });
     };
-    await app.controller.create(DRAFT, media.stage('take1'), 'granted').then(() => order.push('save'));
+    await app.controller.create(DRAFT, media.stage('take1')).then(() => order.push('save'));
     assert.deepEqual(await resetting, RESET_OK);
     assert.deepEqual(order, ['save', 'reset'], 'the reset finishes only after the save it raced with');
     assert.deepEqual(app.controller.current().rallies, []);
@@ -416,7 +419,7 @@ describe('Reset everything coordinates with work in progress', () => {
       resetting = app.controller.reset();
       await app.controller.flush();
     };
-    await app.controller.replace(id, { audio: NEW_AUDIO }, { audio: media.stage('take2') }, 'denied');
+    await app.controller.replace(id, { audio: NEW_AUDIO }, { audio: media.stage('take2') });
     assert.deepEqual(await resetting, RESET_OK);
     assert.deepEqual(app.controller.current().rallies, []);
     assert.deepEqual(app.stored()!.rallies, []);
@@ -474,13 +477,15 @@ describe('Reset everything coordinates with work in progress', () => {
     const { app, store, media } = await withOneSaved();
     store.writeDelay = () => 5;
     const resetting = app.controller.reset();
+    app.access.current = 'pro';
     assert.equal(app.controller.openTake(media.stage('during')), false);
-    assert.deepEqual(await app.controller.create(DRAFT, media.stage('during2'), 'granted'), { ok: false, error: 'busy' });
+    assert.deepEqual(await app.controller.create(DRAFT, media.stage('during2')), { ok: false, error: 'busy' });
+    app.access.current = 'free';
     assert.deepEqual(await resetting, RESET_OK);
     assert.equal(media.staging.size, 0, 'takes staged during the reset are deleted with the rest');
     const after = media.stage('after');
     assert.ok(app.controller.openTake(after));
-    assert.ok((await app.controller.create(DRAFT, after, 'denied')).ok);
+    assert.ok((await app.controller.create(DRAFT, after)).ok);
     await app.controller.releaseTake(after);
     assert.equal(visibleRallies(app.controller.current()).length, 1);
   });
@@ -495,7 +500,8 @@ describe('Reset everything coordinates with work in progress', () => {
     assert.deepEqual(await app.controller.reset(), { ok: false, reason: 'filesRemain', failed: [], remaining: [live] });
     assert.deepEqual([...media.staging.keys()].sort(), ['keep-me.m4a', live]);
     assert.equal(media.library.size, 0);
-    assert.deepEqual(await app.controller.create(DRAFT, live, 'granted'), { ok: false, error: 'discarded' });
+    app.access.current = 'pro';
+    assert.deepEqual(await app.controller.create(DRAFT, live), { ok: false, error: 'discarded' });
     assert.ok(!media.staging.has(live), 'a take from before the reset is deleted, not saved');
     await app.controller.releaseTake(live);
     assert.deepEqual(await app.controller.reset(), RESET_OK);
@@ -567,7 +573,7 @@ describe('File operations that fail after the file may have moved', () => {
     media.afterAdopt = () => {
       throw new Error('reported after the move');
     };
-    const result = await app.controller.create(DRAFT, media.stage('take1'), 'denied');
+    const result = await app.controller.create(DRAFT, media.stage('take1'));
     assert.ok(result.ok);
     assert.equal(result.rally!.status, 'ready');
     assert.deepEqual([...media.library.keys()], [result.rally!.audio.fileName]);
@@ -586,7 +592,7 @@ describe('File operations that fail after the file may have moved', () => {
       media.failList = true;
       throw new Error('reported after the move');
     };
-    assert.deepEqual(await app.controller.create(DRAFT, media.stage('take1'), 'denied'), { ok: false, error: 'mediaFailed' });
+    assert.deepEqual(await app.controller.create(DRAFT, media.stage('take1')), { ok: false, error: 'mediaFailed' });
     assert.equal(app.stored()!.rallies[0].status, 'pending');
     assert.equal(visibleRallies(app.controller.current()).length, 0);
     const next = await relaunch(store, media);
@@ -601,7 +607,7 @@ describe('File operations that fail after the file may have moved', () => {
     await app.launch();
     media.failAdopt = true;
     const take = media.stage('take1');
-    assert.deepEqual(await app.controller.create(DRAFT, take, 'denied'), { ok: false, error: 'mediaFailed' });
+    assert.deepEqual(await app.controller.create(DRAFT, take), { ok: false, error: 'mediaFailed' });
     assert.deepEqual(app.controller.current().rallies, []);
     assert.deepEqual(app.stored()!.rallies, []);
     assert.equal(media.library.size, 0);
@@ -617,11 +623,11 @@ describe('File operations that fail after the file may have moved', () => {
       if (moves === 2) throw new Error('photo failed');
       return adopt(stagedName, fileName);
     };
+    app.access.current = 'pro';
     const result = await app.controller.replace(
       id,
       { audio: NEW_AUDIO, photo: { extension: 'jpg', width: 10, height: 10 } },
       { audio: media.stage('take2'), photo: media.stage('pic', 'jpg') },
-      'granted',
     );
     assert.deepEqual(result, { ok: false, error: 'mediaFailed' });
     const rally = app.controller.current().rallies[0];
@@ -639,7 +645,7 @@ describe('File operations that fail after the file may have moved', () => {
       media.afterAdopt = null;
       throw new Error('reported after the move');
     };
-    const result = await app.controller.replace(id, { audio: NEW_AUDIO }, { audio: media.stage('take2') }, 'denied');
+    const result = await app.controller.replace(id, { audio: NEW_AUDIO }, { audio: media.stage('take2') });
     assert.ok(result.ok);
     assert.equal(result.rally!.audio.fileName, `${id}-a2.m4a`);
     assert.deepEqual([...media.library.keys()], [`${id}-a2.m4a`]);
@@ -681,7 +687,8 @@ describe('Recordings orphaned by corrupted metadata', () => {
     await app.launch();
     assert.deepEqual(app.controller.health().unlisted, orphans);
 
-    const saved = await app.controller.create(DRAFT, media.stage('new'), 'granted');
+    app.access.current = 'pro';
+    const saved = await app.controller.create(DRAFT, media.stage('new'));
     assert.ok(saved.ok);
     assert.ok((await app.controller.delete(saved.rally!.id)).ok);
     assert.ok((await app.controller.recover()).ok);

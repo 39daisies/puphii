@@ -4,8 +4,7 @@
  * interruption at any point leaves enough in storage for `recovery.ts` to finish or undo it.
  */
 
-import type { ProAccess } from '../subscription/entitlement';
-import { canCreate, canReplaceAudio, canUseProExtras, fitsDuration } from './access';
+import { AccessDenial, canCreate, canReplaceAudio, canUseProExtras, fitsDuration, PepAccess, PepUpsell, upsellFor } from './access';
 import { AudioExtension, isAudioExtension, isPepRallyId, isPhotoExtension, MAX_REVISION, mediaFileName, PhotoExtension } from './files';
 import {
   DEFAULT_PEP_TITLE,
@@ -29,7 +28,14 @@ export type PepError =
   | 'noMediaStore'
   | 'busy'
   | 'notFound'
+  /** Subscription status isn't verified yet. Never a reason to offer Pro. */
+  | 'checking'
+  /** Pro can't be bought in this build, so nothing new can be added. */
+  | 'unavailable'
+  /** Free allowance used up. */
   | 'limitReached'
+  /** Pro's 50 are all in use. */
+  | 'libraryFull'
   | 'tooLong'
   | 'invalidAudio'
   | 'invalidPhoto'
@@ -42,7 +48,9 @@ export type PepError =
   /** The take was recorded before "Reset everything", so it was deleted instead of saved. */
   | 'discarded';
 
-export type PepResult = { ok: true; library: PepLibrary; rally: PepRally | null } | { ok: false; error: PepError };
+/** `upsell` is present only when verified Free access is what stood in the way. */
+export type PepFailure = { ok: false; error: PepError; upsell?: PepUpsell };
+export type PepResult = { ok: true; library: PepLibrary; rally: PepRally | null } | PepFailure;
 
 export type AudioDraft = { extension: AudioExtension; durationMs: number; byteSize: number | null };
 export type PhotoDraft = { extension: PhotoExtension; width: number | null; height: number | null };
@@ -60,7 +68,8 @@ export type CreateDraft = {
 
 export type ReplacementDraft = { audio?: AudioDraft; photo?: PhotoDraft };
 
-const fail = (error: PepError): PepResult => ({ ok: false, error });
+const fail = (error: PepError, upsell?: PepUpsell): PepFailure => (upsell ? { ok: false, error, upsell } : { ok: false, error });
+const deny = (denial: AccessDenial): PepFailure => fail(denial.error, denial.upsell);
 
 function update(library: PepLibrary, id: string, at: Date, change: (rally: PepRally) => PepRally | null): PepLibrary {
   const rallies: PepRally[] = [];
@@ -89,24 +98,34 @@ function audioError(draft: AudioDraft, maxDurationMs: number): PepError | null {
   return fitsDuration(draft.durationMs, maxDurationMs) ? null : 'tooLong';
 }
 
+/** Too long for Free is a reason to offer Pro; too long for Pro is not. */
+function audioFailure(library: PepLibrary, draft: AudioDraft, maxDurationMs: number, access: PepAccess): PepFailure | null {
+  const problem = audioError(draft, maxDurationMs);
+  if (!problem) return null;
+  return problem === 'tooLong' ? fail(problem, upsellFor(library, access)) : fail(problem);
+}
+
 function photoError(draft: PhotoDraft): PepError | null {
   const side = (value: number | null) => value === null || (Number.isInteger(value) && value >= 1 && value <= 100_000);
   return isPhotoExtension(draft.extension) && side(draft.width) && side(draft.height) ? null : 'invalidPhoto';
 }
 
 /** Step 1 of saving: records the new rally as pending. Its audio file is moved into place next. */
-export function beginCreate(library: PepLibrary, id: string, draft: CreateDraft, pro: ProAccess, at: Date): PepResult {
+export function beginCreate(library: PepLibrary, id: string, draft: CreateDraft, access: PepAccess, at: Date): PepResult {
   if (!isPepRallyId(id) || findRally(library, id)) return fail('busy');
   const title = normalizeTitle(draft.title);
   if (!title) return fail('invalidTitle');
   if (draft.voice === 'someoneElse' && draft.consentConfirmed !== true) return fail('consentRequired');
-  const allowed = canCreate(library, pro);
-  if (!allowed.ok) return fail(allowed.reason);
-  const problem = audioError(draft.audio, allowed.maxDurationMs);
-  if (problem) return fail(problem);
+  const allowed = canCreate(library, access);
+  if (!allowed.ok) return deny(allowed);
+  const problem = audioFailure(library, draft.audio, allowed.maxDurationMs, access);
+  if (problem) return problem;
   const tags = normalizeTags(draft.tags ?? []);
   if (!tags) return fail('invalidTags');
-  if ((tags.length || draft.favorite) && !canUseProExtras(pro)) return fail('proRequired');
+  if (tags.length || draft.favorite) {
+    const extras = canUseProExtras(library, access);
+    if (!extras.ok) return deny(extras);
+  }
 
   const stamp = at.toISOString();
   const rally: PepRally = {
@@ -160,20 +179,26 @@ export function markPlayed(library: PepLibrary, id: string, at: Date): PepResult
 }
 
 /** Adding a tag needs Pro; removing tags never does. */
-export function setTags(library: PepLibrary, id: string, tags: readonly PepTag[], pro: ProAccess, at: Date): PepResult {
+export function setTags(library: PepLibrary, id: string, tags: readonly PepTag[], access: PepAccess, at: Date): PepResult {
   const rally = visible(library, id);
   if (typeof rally === 'string') return fail(rally);
   const next = normalizeTags(tags);
   if (!next) return fail('invalidTags');
-  if (next.some((tag) => !rally.tags.includes(tag)) && !canUseProExtras(pro)) return fail('proRequired');
+  if (next.some((tag) => !rally.tags.includes(tag))) {
+    const extras = canUseProExtras(library, access);
+    if (!extras.ok) return deny(extras);
+  }
   return done(update(library, id, at, (current) => ({ ...current, tags: next, updatedAt: at.toISOString() })), id);
 }
 
 /** Marking a favorite needs Pro; unmarking never does. */
-export function setFavorite(library: PepLibrary, id: string, favorite: boolean, pro: ProAccess, at: Date): PepResult {
+export function setFavorite(library: PepLibrary, id: string, favorite: boolean, access: PepAccess, at: Date): PepResult {
   const rally = visible(library, id);
   if (typeof rally === 'string') return fail(rally);
-  if (favorite && !rally.favorite && !canUseProExtras(pro)) return fail('proRequired');
+  if (favorite && !rally.favorite) {
+    const extras = canUseProExtras(library, access);
+    if (!extras.ok) return deny(extras);
+  }
   if (favorite === rally.favorite) return done(library, id);
   return done(update(library, id, at, (current) => ({ ...current, favorite, updatedAt: at.toISOString() })), id);
 }
@@ -183,21 +208,22 @@ export function setFavorite(library: PepLibrary, id: string, favorite: boolean, 
  * current tier's length limit, and without Pro only a library within the Free allowance can be
  * re-recorded; a new photo needs Pro. The current media stays in use until step 2.
  */
-export function beginReplacement(library: PepLibrary, id: string, draft: ReplacementDraft, pro: ProAccess, at: Date): PepResult {
+export function beginReplacement(library: PepLibrary, id: string, draft: ReplacementDraft, access: PepAccess, at: Date): PepResult {
   const rally = visible(library, id);
   if (typeof rally === 'string') return fail(rally);
   if (rally.replacing) return fail('busy');
   if (!draft.audio && !draft.photo) return fail('invalidAudio');
   if (draft.photo) {
-    if (!canUseProExtras(pro)) return fail('proRequired');
+    const extras = canUseProExtras(library, access);
+    if (!extras.ok) return deny(extras);
     const problem = photoError(draft.photo);
     if (problem) return fail(problem);
   }
   if (draft.audio) {
-    const allowed = canReplaceAudio(library, pro);
-    if (!allowed.ok) return fail(allowed.reason);
-    const problem = audioError(draft.audio, allowed.maxDurationMs);
-    if (problem) return fail(problem);
+    const allowed = canReplaceAudio(library, access);
+    if (!allowed.ok) return deny(allowed);
+    const problem = audioFailure(library, draft.audio, allowed.maxDurationMs, access);
+    if (problem) return problem;
   }
   const revision = rally.revision + 1;
   if (revision > MAX_REVISION) return fail('busy');
