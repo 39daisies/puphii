@@ -386,11 +386,11 @@ describe('bundled reef assets', () => {
   });
 
   test('the app icon is a 1024 px opaque PNG set in app.json', () => {
-    const png = readFileSync(join(ROOT, 'assets/icon.png'));
+    const png = readFileSync(join(ROOT, 'assets/icon-app-store.png'));
     assert.equal(png.toString('latin1', 1, 4), 'PNG');
     assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1024, 1024]);
     assert.equal(png[25], 2, 'RGB without an alpha channel, as App Store icons require');
-    assert.equal(JSON.parse(read('app.json')).expo.icon, './assets/icon.png');
+    assert.equal(JSON.parse(read('app.json')).expo.icon, './assets/icon-app-store.png');
   });
 
   test('the reef photo is bundled locally and the scene loads nothing remote', () => {
