@@ -29,9 +29,9 @@ export const PLAN_ORDER: readonly PlanId[] = ['annual', 'monthly', 'weekly'];
 
 /**
  * Plans that must never advertise a free trial in the UI, even if the store product carries an
- * intro. Empty: all three TARGET plans may offer trials; eligibility still comes from Apple/RC.
+ * intro (ASC misconfiguration). Weekly TARGET is immediate charge only.
  */
-export const NO_INTRO_OFFER_PLANS: readonly PlanId[] = [];
+export const NO_INTRO_OFFER_PLANS: readonly PlanId[] = ['weekly'];
 
 /** A package whose product was checked against the configuration and may be offered. */
 export type VerifiedPlan = { plan: PlanId; pkg: PurchasesPackage };

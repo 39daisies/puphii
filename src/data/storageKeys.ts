@@ -15,6 +15,8 @@ export const STORAGE_KEYS = {
   skips: '@puphii/skip-logs-v1',
   /** Which cumulative skip milestones have already been acknowledged. */
   skipMilestones: '@puphii/skip-milestones-v1',
+  /** First-launch onboarding draft and pending plan (never puff/skip logs). */
+  onboarding: '@puphii/onboarding-v1',
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];

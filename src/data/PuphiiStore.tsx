@@ -1,8 +1,12 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_GAME_STATS, GameStats, recordRound } from '../game/gameStats';
+import { createOnboardingDraft, OnboardingDraft, sanitizeOnboardingDraft } from '../onboarding/model';
 import { PepLibrary } from '../pepRally/model';
+import { PlanSettings } from '../plan/actions';
 import { PlanEventListener } from '../plan/events';
 import { defaultPlan, PlanRecord } from '../plan/model';
+import { activeSegment } from '../plan/schedule';
 import { AppState } from './appState';
 import { createPepRallyController, PepRallyController } from './pepRallyController';
 import { createPlanController, PlanActions } from './planController';
@@ -20,8 +24,16 @@ import { createWriteQueue } from './writeQueue';
 
 type PuphiiStore = {
   ready: boolean;
-  /** Lifecycle details for future onboarding and offers. Read-only for now. */
+  /** Lifecycle details including onboarding completion. */
   appState: AppState | null;
+  /** First-launch draft; null until storage has loaded. */
+  onboardingDraft: OnboardingDraft | null;
+  /** Persist onboarding step answers (never writes puff/skip logs). */
+  updateOnboardingDraft: (next: OnboardingDraft) => void;
+  /** Mark onboarding complete and store the plan to activate after entitlement. */
+  finishOnboarding: (pendingPlan: PlanSettings) => void;
+  /** Start the pending onboarding plan exactly once after a confirmed subscription. */
+  activatePendingPlanOnce: () => void;
   logs: PuffLog[];
   settings: Settings;
   storageError: string | null;
@@ -76,8 +88,11 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
   const [savings, setSavings] = useState<SavingsSettings>(() => defaultSavings(deviceCurrency()));
   const [gameStats, setGameStats] = useState<GameStats>(DEFAULT_GAME_STATS);
   const [appState, setAppState] = useState<AppState | null>(null);
+  const [onboardingDraft, setOnboardingDraft] = useState<OnboardingDraft | null>(null);
   const [plan, setPlan] = useState<PlanRecord>(defaultPlan);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const appStateRef = useRef<AppState | null>(null);
+  const onboardingDraftRef = useRef<OnboardingDraft | null>(null);
 
   // Refs are the synchronous source of truth so rapid taps never read stale state.
   const logsRef = useRef<PuffLog[]>([]);
@@ -105,6 +120,8 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       plan: queue<PlanRecord>(STORAGE_KEYS.plan),
       skips: queue<SkipLog[]>(STORAGE_KEYS.skips),
       skipMilestones: queue<SkipMilestoneState>(STORAGE_KEYS.skipMilestones),
+      appState: queue<AppState>(STORAGE_KEYS.appState),
+      onboarding: queue<OnboardingDraft>(STORAGE_KEYS.onboarding),
     };
   }, []);
 
@@ -126,7 +143,7 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-    loadPersistedState().then((result) => {
+    Promise.all([loadPersistedState(), AsyncStorage.getItem(STORAGE_KEYS.onboarding)]).then(([result, onboardingRaw]) => {
       if (!mounted) return;
       logsRef.current = result.logs;
       skipsRef.current = result.skips;
@@ -140,7 +157,18 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       setSettings(result.settings);
       setSavings(result.savings);
       setGameStats(result.gameStats);
+      appStateRef.current = result.appState;
       setAppState(result.appState);
+      let draft: OnboardingDraft = createOnboardingDraft();
+      if (onboardingRaw) {
+        try {
+          draft = sanitizeOnboardingDraft(JSON.parse(onboardingRaw)) ?? createOnboardingDraft();
+        } catch {
+          draft = createOnboardingDraft();
+        }
+      }
+      onboardingDraftRef.current = draft;
+      setOnboardingDraft(draft);
       setStorageError(result.error);
       canSaveRef.current = result.canSave;
       planController.load(result.plan);
@@ -152,6 +180,59 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
     };
   }, [planController, pepRallyController]);
+
+  const updateOnboardingDraft = useCallback(
+    (next: OnboardingDraft) => {
+      if (!readyRef.current) return;
+      onboardingDraftRef.current = next;
+      setOnboardingDraft(next);
+      queues.onboarding.save(next);
+    },
+    [queues],
+  );
+
+  const finishOnboarding = useCallback(
+    (pendingPlan: PlanSettings) => {
+      if (!readyRef.current) return;
+      const now = new Date().toISOString();
+      const nextDraft: OnboardingDraft = {
+        ...(onboardingDraftRef.current ?? createOnboardingDraft()),
+        step: 'preview',
+        pendingPlan,
+        planActivatedAt: null,
+      };
+      onboardingDraftRef.current = nextDraft;
+      setOnboardingDraft(nextDraft);
+      queues.onboarding.save(nextDraft);
+      const current = appStateRef.current;
+      if (current) {
+        const nextApp: AppState = { ...current, onboardingCompletedAt: now };
+        appStateRef.current = nextApp;
+        setAppState(nextApp);
+        queues.appState.save(nextApp);
+      }
+    },
+    [queues],
+  );
+
+  const activatePendingPlanOnce = useCallback(() => {
+    if (!readyRef.current) return;
+    const draft = onboardingDraftRef.current;
+    if (!draft?.pendingPlan || draft.planActivatedAt) return;
+    if (activeSegment(planController.current())) {
+      const cleared: OnboardingDraft = { ...draft, planActivatedAt: new Date().toISOString(), pendingPlan: null };
+      onboardingDraftRef.current = cleared;
+      setOnboardingDraft(cleared);
+      queues.onboarding.save(cleared);
+      return;
+    }
+    const result = planController.actions.start(draft.pendingPlan);
+    if (!result.ok && result.error !== 'planAlreadyActive') return;
+    const nextDraft: OnboardingDraft = { ...draft, planActivatedAt: new Date().toISOString(), pendingPlan: null };
+    onboardingDraftRef.current = nextDraft;
+    setOnboardingDraft(nextDraft);
+    queues.onboarding.save(nextDraft);
+  }, [queues, planController]);
 
   const commitLogs = useCallback(
     (next: PuffLog[]) => {
@@ -310,6 +391,10 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ready,
       appState,
+      onboardingDraft,
+      updateOnboardingDraft,
+      finishOnboarding,
+      activatePendingPlanOnce,
       logs,
       settings,
       storageError,
@@ -337,6 +422,10 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     [
       ready,
       appState,
+      onboardingDraft,
+      updateOnboardingDraft,
+      finishOnboarding,
+      activatePendingPlanOnce,
       logs,
       settings,
       savings,

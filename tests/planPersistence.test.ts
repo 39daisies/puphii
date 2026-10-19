@@ -399,9 +399,9 @@ describe('store wiring', () => {
     assert.match(body('resetAll'), /planController\.reset\(\);\s+purgeBackups\(\[\.\.\.RESET_KEYS\]\)/);
   });
 
-  test('plan state and actions are exposed, and nothing about plans involves subscriptions', () => {
+  test('plan state and actions are exposed, and the plan controller stays subscription-free', () => {
     assert.match(store, /plan,\s+planActions: planController\.actions,\s+subscribePlanEvents: planController\.subscribe,/);
     const controller = readFileSync(join(__dirname, '..', '..', 'src', 'data', 'planController.ts'), 'utf8');
-    for (const text of [store, controller]) assert.ok(!/subscription|entitlement|ProGate|paywall/i.test(text.replace(/subscribe\w*/gi, '')));
+    assert.ok(!/subscription|entitlement|ProGate|paywall/i.test(controller.replace(/subscribe\w*/gi, '')));
   });
 });

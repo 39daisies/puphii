@@ -3,7 +3,7 @@
     "name": "Puphii",
     "slug": "puphii-mvp",
     "owner": "39seikagrp",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon-app-store.png",
     "userInterfaceStyle": "light",
@@ -14,6 +14,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.puphii.app",
+      "buildNumber": "1",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -46,6 +47,7 @@
     },
     "android": {
       "package": "com.puphii.app",
+      "versionCode": 1,
       "allowBackup": false,
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",

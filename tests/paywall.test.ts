@@ -51,7 +51,6 @@ const TEST_LEGAL_URLS = {
 };
 
 const DAY_TRIAL = { price: 0, priceString: '$0.00', cycles: 1, period: 'P1W', periodUnit: 'DAY', periodNumberOfUnits: 7 };
-const TWO_WEEK_TRIAL = { price: 0, priceString: '$0.00', cycles: 1, period: 'P2W', periodUnit: 'WEEK', periodNumberOfUnits: 2 };
 const THREE_DAY_TRIAL = { price: 0, priceString: '$0.00', cycles: 1, period: 'P3D', periodUnit: 'DAY', periodNumberOfUnits: 3 };
 const WEEK_TRIAL = { price: 0, priceString: '$0.00', cycles: 1, period: 'P1W', periodUnit: 'WEEK', periodNumberOfUnits: 1 };
 const PAID_INTRO = { price: 0.99, priceString: '$0.99', cycles: 1, period: 'P1M', periodUnit: 'MONTH', periodNumberOfUnits: 1 };
@@ -85,16 +84,16 @@ function offerings(current: string | null, all: Record<string, PurchasesPackage[
 }
 
 /** `default_v2` as the App Store sees it: one Apple product per package. */
-const appleV2 = (annualIntro: object | null = TWO_WEEK_TRIAL) => [
+const appleV2 = (annualIntro: object | null = DAY_TRIAL) => [
   pkg('$rc_annual', 'puphii_annual_2999', '$29.99', 'P1Y', { intro: annualIntro, perMonth: '$2.49' }),
-  pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro: DAY_TRIAL }),
-  pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { intro: THREE_DAY_TRIAL, perMonth: '$7.96' }),
+  pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro: THREE_DAY_TRIAL }),
+  pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { perMonth: '$7.96' }),
 ];
 /** `default_v2` as the Test Store sees it. */
 const testStoreV2 = () => [
-  pkg('$rc_annual', 'yearly_2999', '$29.99', 'P1Y', { intro: TWO_WEEK_TRIAL, perMonth: '$2.49' }),
-  pkg('$rc_monthly', 'monthly_499', '$4.99', 'P1M', { intro: DAY_TRIAL }),
-  pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1W', { intro: THREE_DAY_TRIAL }),
+  pkg('$rc_annual', 'yearly_2999', '$29.99', 'P1Y', { intro: DAY_TRIAL, perMonth: '$2.49' }),
+  pkg('$rc_monthly', 'monthly_499', '$4.99', 'P1M', { intro: THREE_DAY_TRIAL }),
+  pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1W'),
 ];
 /** `default_v2` as the App Store sees it, with a different weekly package in place of the real one, or none. */
 const appleWithWeekly = (weekly: PurchasesPackage | null) => [...appleV2().slice(0, 2), ...(weekly ? [weekly] : [])];
@@ -291,7 +290,7 @@ describe('Apple product to package mapping', () => {
   });
 
   test('a monthly product with an introductory offer is still offered alongside weekly', () => {
-    assert.deepEqual(NO_INTRO_OFFER_PLANS, []);
+    assert.deepEqual(NO_INTRO_OFFER_PLANS, ['weekly']);
     const [annual, , weekly] = appleV2();
     for (const intro of [DAY_TRIAL, WEEK_TRIAL, PAID_INTRO]) {
       const monthly = pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro });
@@ -360,34 +359,33 @@ describe('price and trial text come only from store metadata', () => {
     assert.equal(display.price, '$1.99');
     assert.equal(display.priceLine, '$1.99 / week');
     assert.equal(display.billingLine, 'Renews every week until you cancel.');
-    assert.match(display.disclosure, /^\$1\.99 per week, charged to your Apple Account/);
-    assert.match(display.disclosure, /If you qualify for an introductory offer/);
-    assert.match(display.disclosure, /Renews automatically every week/);
+    assert.equal(
+      display.disclosure,
+      '$1.99 per week, charged to your Apple Account when you confirm. Renews automatically every week unless cancelled at least 24 hours before the current period ends. Cancel anytime in your Apple Account settings.',
+    );
     assert.equal(display.monthlyEquivalent, null, 'no approximate per-month figure for a weekly plan, even when the SDK has one');
     assert.equal(display.trialBadge, null, 'unknown eligibility never claims a trial');
     assert.equal(display.cta, 'Subscribe');
   });
 
-  test('a weekly free trial is claimed only when eligible; otherwise immediate charge', () => {
+  test('weekly never advertises a free trial even if the store product has an intro', () => {
     const withIntro = { plan: 'weekly' as const, pkg: pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', { intro: THREE_DAY_TRIAL }) };
-    const eligible = describePlan(withIntro, 'eligible', 'ios');
-    assert.equal(eligible.trialBadge, '3-day free trial');
-    assert.match(eligible.cta, /trial/i);
-    const ineligible = describePlan(withIntro, 'ineligible', 'ios');
-    assert.equal(ineligible.trialBadge, null);
-    assert.equal(ineligible.cta, 'Subscribe');
-    const noIntro = describePlan({ plan: 'weekly', pkg: pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W') }, 'eligible', 'ios');
-    assert.equal(noIntro.trialBadge, null);
+    for (const eligibility of ['eligible', 'ineligible', 'unknown'] as const) {
+      const display = describePlan(withIntro, eligibility, 'ios');
+      assert.equal(display.trialBadge, null, eligibility);
+      assert.equal(display.cta, 'Subscribe', eligibility);
+      assert.ok(!/free trial/i.test(display.disclosure + display.billingLine), eligibility);
+    }
   });
 
   test('a monthly introductory offer is described from store data, as before weekly support', () => {
-    const freeMonthly = { plan: 'monthly' as const, pkg: pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro: DAY_TRIAL }) };
+    const freeMonthly = { plan: 'monthly' as const, pkg: pkg('$rc_monthly', 'puphii_monthly_499', '$4.99', 'P1M', { intro: THREE_DAY_TRIAL }) };
     const eligible = describePlan(freeMonthly, 'eligible', 'ios');
-    assert.equal(eligible.trialBadge, '7-day free trial');
+    assert.equal(eligible.trialBadge, '3-day free trial');
     assert.equal(eligible.cta, 'Start free trial');
-    assert.match(eligible.disclosure, /^Free for 7 days, then \$4\.99 per month, charged to your Apple Account when the trial ends/);
+    assert.match(eligible.disclosure, /^Free for 3 days, then \$4\.99 per month, charged to your Apple Account when the trial ends/);
     assert.equal(eligible.billingLine, 'After the free trial, renews every month until you cancel.');
-    assert.equal(eligible.accessibilityLabel, 'Monthly plan. 7-day free trial, then $4.99 per month. Renews every month until you cancel.');
+    assert.equal(eligible.accessibilityLabel, 'Monthly plan. 3-day free trial, then $4.99 per month. Renews every month until you cancel.');
     const unknown = describePlan(freeMonthly, 'unknown', 'ios');
     assert.equal(unknown.trialBadge, null);
     assert.match(unknown.disclosure, /If you qualify for an introductory offer, Apple shows it before you confirm/);
@@ -410,11 +408,11 @@ describe('price and trial text come only from store metadata', () => {
 
   test('the trial is claimed only when the product offers it free and RevenueCat confirms eligibility', () => {
     const eligible = describePlan(annual, 'eligible', 'ios');
-    assert.equal(eligible.trialBadge, '14-day free trial');
+    assert.equal(eligible.trialBadge, '7-day free trial');
     assert.equal(eligible.cta, 'Start free trial');
     assert.equal(
       eligible.disclosure,
-      'Free for 14 days, then $29.99 per year, charged to your Apple Account when the trial ends. Renews automatically every year unless cancelled at least 24 hours before the trial or current period ends. Cancel anytime in your Apple Account settings.',
+      'Free for 7 days, then $29.99 per year, charged to your Apple Account when the trial ends. Renews automatically every year unless cancelled at least 24 hours before the trial or current period ends. Cancel anytime in your Apple Account settings.',
     );
 
     for (const eligibility of ['ineligible', 'unknown'] as const) {
@@ -490,7 +488,7 @@ describe('price and trial text come only from store metadata', () => {
         (display) => display.accessibilityLabel,
       ),
       [
-        'Yearly plan. 14-day free trial, then $29.99 per year, about $2.49 per month. Renews every year until you cancel.',
+        'Yearly plan. 7-day free trial, then $29.99 per year, about $2.49 per month. Renews every year until you cancel.',
         'Yearly plan. $29.99 per year, about $2.49 per month. Renews every year until you cancel.',
         'Monthly plan. $4.99 per month. Renews every month until you cancel.',
         'Weekly plan. $1.99 per week. Renews every week until you cancel.',
@@ -508,7 +506,7 @@ describe('price and trial text come only from store metadata', () => {
     assert.equal(describePlan(annual, 'eligible', 'ios').ctaAccessibilityLabel, 'Start free trial, Yearly plan, then $29.99 per year');
     assert.equal(describePlan(annual, 'ineligible', 'ios').ctaAccessibilityLabel, 'Subscribe, Yearly plan, $29.99 per year');
     assert.equal(describePlan(monthly, 'unknown', 'ios').ctaAccessibilityLabel, 'Subscribe, Monthly plan, $4.99 per month');
-    assert.equal(describePlan(weekly, 'eligible', 'ios').ctaAccessibilityLabel, 'Start free trial, Weekly plan, then $1.99 per week');
+    assert.equal(describePlan(weekly, 'eligible', 'ios').ctaAccessibilityLabel, 'Subscribe, Weekly plan, $1.99 per week');
   });
 
   test('each platform names its own store', () => {
@@ -546,8 +544,8 @@ describe('paywall controller', () => {
     assert.equal(state.offeringId, 'default_v2');
     assert.deepEqual(planIds(state.plans), ['annual', 'monthly', 'weekly']);
     assert.equal(state.selected, 'annual');
-    assert.deepEqual(calls.eligibility, [['puphii_annual_2999', 'puphii_monthly_499', 'puphii_weekly_199']], 'eligibility is checked for every product with a free trial');
-    assert.deepEqual(state.trial, { annual: 'eligible', monthly: 'eligible', weekly: 'eligible' });
+    assert.deepEqual(calls.eligibility, [['puphii_annual_2999', 'puphii_monthly_499']], 'weekly never checked for intro eligibility');
+    assert.deepEqual(state.trial, { annual: 'eligible', monthly: 'eligible' });
   });
 
   test('without a usable weekly package the paywall still loads Annual and Monthly, with Annual selected', async () => {
@@ -574,8 +572,8 @@ describe('paywall controller', () => {
     assert.equal(state.phase, 'ready');
     assert.deepEqual(planIds(state.plans), ['annual', 'monthly', 'weekly']);
     assert.equal(state.selected, 'annual');
-    assert.deepEqual(calls.eligibility, [['puphii_annual_2999', 'puphii_monthly_499', 'puphii_weekly_199']]);
-    assert.deepEqual(state.trial, { annual: 'eligible', monthly: 'eligible', weekly: 'eligible' });
+    assert.deepEqual(calls.eligibility, [['puphii_annual_2999', 'puphii_monthly_499']]);
+    assert.deepEqual(state.trial, { annual: 'eligible', monthly: 'eligible' });
   });
 
   test('the weekly plan can be selected and bought, and only its own product is purchased', async () => {
@@ -594,7 +592,7 @@ describe('paywall controller', () => {
     await controller.load();
     const state = controller.current();
     assert.equal(state.phase, 'ready');
-    assert.deepEqual(state.trial, { annual: 'unknown', monthly: 'unknown', weekly: 'unknown' });
+    assert.deepEqual(state.trial, { annual: 'unknown', monthly: 'unknown' });
     assert.equal(describePlan(state.plans[0], state.trial.annual!, 'ios').trialBadge, null);
   });
 
@@ -602,7 +600,7 @@ describe('paywall controller', () => {
     const { controller, control } = fakes();
     control.eligibility = (ids) => Promise.resolve(Object.fromEntries(ids.map((id) => [id, { status: INTRO_ELIGIBILITY.INELIGIBLE }])));
     await controller.load();
-    assert.deepEqual(controller.current().trial, { annual: 'ineligible', monthly: 'ineligible', weekly: 'ineligible' });
+    assert.deepEqual(controller.current().trial, { annual: 'ineligible', monthly: 'ineligible' });
   });
 
   test('missing offerings, products, SDK or configuration show an unavailable state', async () => {

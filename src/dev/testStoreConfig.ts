@@ -6,7 +6,7 @@ import type { ExpectedOffering } from './testStoreHarness';
  * current offering, so it never reaches the app's own screens. Development builds only.
  *
  * TARGET intro lengths (must match ASC / Test Store setup before the harness will pass):
- * annual 14 days · monthly 7 days · weekly 3 days.
+ * annual 7 days · monthly 3 days · weekly none.
  */
 export const TEST_STORE_OFFERING_ID = 'default_v2';
 
@@ -19,21 +19,21 @@ export const TEST_STORE_EXPECTED: ExpectedOffering = {
       productId: TEST_STORE_PRODUCT_IDS.annual,
       billingPeriod: PLANS.annual.billingPeriod,
       price: { amount: 29.99, currencyCode: 'USD' },
-      freeTrialDays: 14,
+      freeTrialDays: 7,
     },
     monthly: {
       packageId: PLANS.monthly.packageId,
       productId: TEST_STORE_PRODUCT_IDS.monthly,
       billingPeriod: PLANS.monthly.billingPeriod,
       price: { amount: 4.99, currencyCode: 'USD' },
-      freeTrialDays: 7,
+      freeTrialDays: 3,
     },
     weekly: {
       packageId: PLANS.weekly.packageId,
       productId: TEST_STORE_PRODUCT_IDS.weekly,
       billingPeriod: PLANS.weekly.billingPeriod,
       price: { amount: 1.99, currencyCode: 'USD' },
-      freeTrialDays: 3,
+      freeTrialDays: null,
     },
   },
 };

@@ -86,19 +86,18 @@ function customer(entries: PurchasesEntitlementInfo[] = []): CustomerInfo {
 /** The harness's real expectation for the Test Store offering. */
 const EXPECTED = TEST_STORE_EXPECTED;
 const WEEK_TRIAL = { price: 0, priceString: '$0.00', cycles: 1, periodUnit: 'WEEK', periodNumberOfUnits: 1 };
-const TWO_WEEK_TRIAL = { price: 0, priceString: '$0.00', cycles: 1, periodUnit: 'WEEK', periodNumberOfUnits: 2 };
 const DAY_TRIAL = { price: 0, priceString: '$0.00', cycles: 1, periodUnit: 'DAY', periodNumberOfUnits: 7 };
 const THREE_DAY_TRIAL = { price: 0, priceString: '$0.00', cycles: 1, periodUnit: 'DAY', periodNumberOfUnits: 3 };
 /** The original offering, still current in RevenueCat and not what the harness tests. */
 const ORIGINAL = [pkg('$rc_annual', 'yearly', '$29.99', 'P1Y', DAY_TRIAL), pkg('$rc_monthly', 'monthly', '$4.99', 'P1M')];
-const v2 = (annualIntro: object | null = TWO_WEEK_TRIAL) => [
+const v2 = (annualIntro: object | null = DAY_TRIAL) => [
   pkg('$rc_annual', 'yearly_2999', '$29.99', 'P1Y', annualIntro),
-  pkg('$rc_monthly', 'monthly_499', '$4.99', 'P1M', DAY_TRIAL),
-  pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1W', THREE_DAY_TRIAL),
+  pkg('$rc_monthly', 'monthly_499', '$4.99', 'P1M', THREE_DAY_TRIAL),
+  pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1W'),
 ];
 const NO_PRODUCTS = { annual: null, monthly: null, weekly: null };
 /** RevenueCat's response as set up in the dashboard: `default` current, `default_v2` alongside it. */
-const planned = (annualIntro: object | null = TWO_WEEK_TRIAL) => offerings('default', { default: ORIGINAL, default_v2: v2(annualIntro) });
+const planned = (annualIntro: object | null = DAY_TRIAL) => offerings('default', { default: ORIGINAL, default_v2: v2(annualIntro) });
 const withV2 = (packages: PurchasesPackage[]) => offerings('default', { default: ORIGINAL, default_v2: packages });
 
 const storeError = (code: string, extra: object = {}) => Object.assign(new Error(`store error ${code}`), { code, ...extra });
@@ -235,13 +234,13 @@ describe('Test Store harness isolation', () => {
 
 describe('Test Store products and outcomes', () => {
   test('lists only the packages of the offering it is given, with prices, periods and trials', () => {
-    const rows = productRows(findOffering(planned(TWO_WEEK_TRIAL), 'default_v2')!, 'default');
+    const rows = productRows(findOffering(planned(DAY_TRIAL), 'default_v2')!, 'default');
     assert.deepEqual(
       rows.map((r) => [r.key, r.isCurrentOffering, r.productId, r.price, r.period, r.introOffer]),
       [
-        ['default_v2/$rc_annual', false, 'yearly_2999', '$29.99', 'P1Y', 'Free trial: 2 weeks'],
-        ['default_v2/$rc_monthly', false, 'monthly_499', '$4.99', 'P1M', 'Free trial: 7 days'],
-        ['default_v2/$rc_weekly', false, 'weekly_199', '$1.99', 'P1W', 'Free trial: 3 days'],
+        ['default_v2/$rc_annual', false, 'yearly_2999', '$29.99', 'P1Y', 'Free trial: 7 days'],
+        ['default_v2/$rc_monthly', false, 'monthly_499', '$4.99', 'P1M', 'Free trial: 3 days'],
+        ['default_v2/$rc_weekly', false, 'weekly_199', '$1.99', 'P1W', null],
       ],
     );
     assert.equal(productRows(findOffering(planned(), 'default')!, 'default')[0].isCurrentOffering, true);
@@ -291,9 +290,9 @@ describe('Test Store offering setup', () => {
     assert.equal(TEST_STORE_OFFERING_ID, 'default_v2');
     assert.equal(EXPECTED.offeringId, 'default_v2');
     assert.deepEqual(EXPECTED.plans, {
-      annual: { packageId: '$rc_annual', productId: 'yearly_2999', billingPeriod: 'P1Y', price: { amount: 29.99, currencyCode: 'USD' }, freeTrialDays: 14 },
-      monthly: { packageId: '$rc_monthly', productId: 'monthly_499', billingPeriod: 'P1M', price: { amount: 4.99, currencyCode: 'USD' }, freeTrialDays: 7 },
-      weekly: { packageId: '$rc_weekly', productId: 'weekly_199', billingPeriod: 'P1W', price: { amount: 1.99, currencyCode: 'USD' }, freeTrialDays: 3 },
+      annual: { packageId: '$rc_annual', productId: 'yearly_2999', billingPeriod: 'P1Y', price: { amount: 29.99, currencyCode: 'USD' }, freeTrialDays: 7 },
+      monthly: { packageId: '$rc_monthly', productId: 'monthly_499', billingPeriod: 'P1M', price: { amount: 4.99, currencyCode: 'USD' }, freeTrialDays: 3 },
+      weekly: { packageId: '$rc_weekly', productId: 'weekly_199', billingPeriod: 'P1W', price: { amount: 1.99, currencyCode: 'USD' }, freeTrialDays: null },
     });
   });
 
@@ -330,15 +329,15 @@ describe('Explicit offering lookup', () => {
 
 describe('Test Store offering check', () => {
   test('default_v2 as set up in the dashboard passes, judged on SDK product data', () => {
-    for (const trial of [TWO_WEEK_TRIAL, { price: 0, priceString: '$0.00', cycles: 1, periodUnit: 'DAY', periodNumberOfUnits: 14 }]) {
+    for (const trial of [DAY_TRIAL, WEEK_TRIAL]) {
       const check = checkOffering(planned(trial), EXPECTED);
       assert.equal(check.ok, true, check.lines.join('\n'));
     }
     assert.deepEqual(checkOffering(planned(), EXPECTED).lines, [
       'OK offering: default_v2 (loaded by identifier; not current)',
-      'OK annual: $rc_annual → yearly_2999, P1Y, $29.99 (29.99 USD), Free trial: 2 weeks',
-      'OK monthly: $rc_monthly → monthly_499, P1M, $4.99 (4.99 USD), Free trial: 7 days',
-      'OK weekly: $rc_weekly → weekly_199, P1W, $1.99 (1.99 USD), Free trial: 3 days',
+      'OK annual: $rc_annual → yearly_2999, P1Y, $29.99 (29.99 USD), Free trial: 7 days',
+      'OK monthly: $rc_monthly → monthly_499, P1M, $4.99 (4.99 USD), Free trial: 3 days',
+      'OK weekly: $rc_weekly → weekly_199, P1W, $1.99 (1.99 USD), no trial',
     ]);
     const current = offerings('default_v2', { default: ORIGINAL, default_v2: v2() });
     assert.equal(checkOffering(current, EXPECTED).lines[0], 'OK offering: default_v2 (current)');
@@ -363,7 +362,7 @@ describe('Test Store offering check', () => {
     );
     assert.match(
       swapped.lines[1],
-      /^Mismatch annual: product is monthly_499, expected yearly_2999; period is P1M, expected P1Y; price is 4.99 USD, expected 29.99 USD; expected a 14-day free trial, found none/,
+      /^Mismatch annual: product is monthly_499, expected yearly_2999; period is P1M, expected P1Y; price is 4.99 USD, expected 29.99 USD; expected a 7-day free trial, found none/,
     );
     assert.match(
       swapped.lines[2],
@@ -383,37 +382,40 @@ describe('Test Store offering check', () => {
     assert.match(yen.lines[2], /price is 4.99 JPY, expected 4.99 USD/);
   });
 
-  test('the annual trial must be a free 14-day offer; none, paid or a different length is reported', () => {
-    assert.match(checkOffering(planned(null), EXPECTED).lines[1], /expected a 14-day free trial, found none/);
+  test('the annual trial must be a free 7-day offer; none, paid or a different length is reported', () => {
+    assert.match(checkOffering(planned(null), EXPECTED).lines[1], /expected a 7-day free trial, found none/);
     const paid = { price: 0.99, priceString: '$0.99', cycles: 1, periodUnit: 'WEEK', periodNumberOfUnits: 1 };
-    assert.match(checkOffering(planned(paid), EXPECTED).lines[1], /expected a 14-day free trial, found "Introductory price \$0\.99 for 1 week"/);
+    assert.match(checkOffering(planned(paid), EXPECTED).lines[1], /expected a 7-day free trial, found "Introductory price \$0\.99 for 1 week"/);
     const threeDays = { ...DAY_TRIAL, periodNumberOfUnits: 3 };
-    assert.match(checkOffering(planned(threeDays), EXPECTED).lines[1], /expected a 14-day free trial, found "Free trial: 3 days"/);
+    assert.match(checkOffering(planned(threeDays), EXPECTED).lines[1], /expected a 7-day free trial, found "Free trial: 3 days"/);
     const month = { ...DAY_TRIAL, periodUnit: 'MONTH', periodNumberOfUnits: 1 };
-    assert.match(checkOffering(planned(month), EXPECTED).lines[1], /expected a 14-day free trial, found "Free trial: 1 month"/);
-    const oneWeek = WEEK_TRIAL;
-    assert.match(checkOffering(planned(oneWeek), EXPECTED).lines[1], /expected a 14-day free trial, found "Free trial: 1 week"/);
+    assert.match(checkOffering(planned(month), EXPECTED).lines[1], /expected a 7-day free trial, found "Free trial: 1 month"/);
+    const fourteen = { ...DAY_TRIAL, periodNumberOfUnits: 14 };
+    assert.match(checkOffering(planned(fourteen), EXPECTED).lines[1], /expected a 7-day free trial, found "Free trial: 14 days"/);
   });
 
-  test('the monthly plan must have a 7-day free trial', () => {
+  test('the monthly plan must have a 3-day free trial', () => {
     const missing = checkOffering(withV2([v2()[0], pkg('$rc_monthly', 'monthly_499', '$4.99', 'P1M', null), v2()[2]]), EXPECTED);
     assert.equal(missing.ok, false);
-    assert.match(missing.lines[2], /expected a 7-day free trial, found none/);
+    assert.match(missing.lines[2], /expected a 3-day free trial, found none/);
+    const three = checkOffering(withV2([v2()[0], pkg('$rc_monthly', 'monthly_499', '$4.99', 'P1M', THREE_DAY_TRIAL), v2()[2]]), EXPECTED);
+    assert.equal(three.ok, true, three.lines.join('\n'));
     const week = checkOffering(withV2([v2()[0], pkg('$rc_monthly', 'monthly_499', '$4.99', 'P1M', WEEK_TRIAL), v2()[2]]), EXPECTED);
-    assert.equal(week.ok, true, week.lines.join('\n'));
+    assert.equal(week.ok, false);
+    assert.match(week.lines[2], /expected a 3-day free trial, found "Free trial: 1 week"/);
   });
 
-  test('the weekly plan must be weekly_199, billed every week, with a 3-day free trial', () => {
+  test('the weekly plan must be weekly_199, billed every week, with no introductory offer', () => {
     const [annual, monthly] = v2();
     const missing = checkOffering(withV2([annual, monthly]), EXPECTED);
     assert.equal(missing.ok, false);
     assert.deepEqual(missing.lines.slice(1), [
-      'OK annual: $rc_annual → yearly_2999, P1Y, $29.99 (29.99 USD), Free trial: 2 weeks',
-      'OK monthly: $rc_monthly → monthly_499, P1M, $4.99 (4.99 USD), Free trial: 7 days',
+      'OK annual: $rc_annual → yearly_2999, P1Y, $29.99 (29.99 USD), Free trial: 7 days',
+      'OK monthly: $rc_monthly → monthly_499, P1M, $4.99 (4.99 USD), Free trial: 3 days',
       'Mismatch weekly: package $rc_weekly is not in the offering "default_v2".',
     ]);
     const wrongTrial = checkOffering(withV2([annual, monthly, pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1W', DAY_TRIAL)]), EXPECTED);
-    assert.match(wrongTrial.lines[3], /^Mismatch weekly: expected a 3-day free trial, found "Free trial: 7 days"/);
+    assert.match(wrongTrial.lines[3], /^Mismatch weekly: expected no introductory offer, found "Free trial: 7 days"/);
     const monthlyPeriod = checkOffering(withV2([annual, monthly, pkg('$rc_weekly', 'weekly_199', '$1.99', 'P1M', THREE_DAY_TRIAL)]), EXPECTED);
     assert.match(monthlyPeriod.lines[3], /^Mismatch weekly: period is P1M, expected P1W/);
     const appStoreProduct = checkOffering(withV2([annual, monthly, pkg('$rc_weekly', 'puphii_weekly_199', '$1.99', 'P1W', THREE_DAY_TRIAL)]), EXPECTED);
@@ -836,11 +838,11 @@ describe('Simulated purchase failure', () => {
 
 describe('App Store sandbox purchases in the development harness', () => {
   /** default_v2 as RevenueCat returns it with the iOS key: the same packages, holding the App Store products. */
-  const appStoreV2 = (currencyCode = 'USD', annualIntro: object | null = TWO_WEEK_TRIAL) =>
+  const appStoreV2 = (currencyCode = 'USD', annualIntro: object | null = DAY_TRIAL) =>
     withV2([
       pkg('$rc_annual', 'puphii_annual_2999', currencyCode === 'USD' ? '$29.99' : '¥4,500', 'P1Y', annualIntro, currencyCode),
-      pkg('$rc_monthly', 'puphii_monthly_499', currencyCode === 'USD' ? '$4.99' : '¥750', 'P1M', DAY_TRIAL, currencyCode),
-      pkg('$rc_weekly', 'puphii_weekly_199', currencyCode === 'USD' ? '$1.99' : '¥300', 'P1W', THREE_DAY_TRIAL, currencyCode),
+      pkg('$rc_monthly', 'puphii_monthly_499', currencyCode === 'USD' ? '$4.99' : '¥750', 'P1M', THREE_DAY_TRIAL, currencyCode),
+      pkg('$rc_weekly', 'puphii_weekly_199', currencyCode === 'USD' ? '$1.99' : '¥300', 'P1W', null, currencyCode),
     ]);
   const appStoreEntry = (overrides: Partial<PurchasesEntitlementInfo> = {}) =>
     testStoreEntry({ productIdentifier: 'puphii_annual_2999', store: 'APP_STORE', periodType: 'TRIAL', ...overrides });
@@ -860,9 +862,9 @@ describe('App Store sandbox purchases in the development harness', () => {
   test('the App Store expectations use the App Store product IDs from config.ts and never the Test Store ones', () => {
     assert.equal(APP_STORE_OFFERING_ID, 'default_v2');
     assert.deepEqual(APP_STORE_EXPECTED.plans, {
-      annual: { packageId: '$rc_annual', productId: 'puphii_annual_2999', billingPeriod: 'P1Y', price: null, freeTrialDays: 14 },
-      monthly: { packageId: '$rc_monthly', productId: 'puphii_monthly_499', billingPeriod: 'P1M', price: null, freeTrialDays: 7 },
-      weekly: { packageId: '$rc_weekly', productId: 'puphii_weekly_199', billingPeriod: 'P1W', price: null, freeTrialDays: 3 },
+      annual: { packageId: '$rc_annual', productId: 'puphii_annual_2999', billingPeriod: 'P1Y', price: null, freeTrialDays: 7 },
+      monthly: { packageId: '$rc_monthly', productId: 'puphii_monthly_499', billingPeriod: 'P1M', price: null, freeTrialDays: 3 },
+      weekly: { packageId: '$rc_weekly', productId: 'puphii_weekly_199', billingPeriod: 'P1W', price: null, freeTrialDays: null },
     });
     for (const plan of ['annual', 'monthly', 'weekly'] as const) {
       assert.equal(APP_STORE_EXPECTED.plans[plan].productId, PLANS[plan].productIds.ios);
@@ -877,12 +879,12 @@ describe('App Store sandbox purchases in the development harness', () => {
       const check = checkOffering(appStoreV2(currency), APP_STORE_EXPECTED);
       assert.equal(check.ok, true, check.lines.join('\n'));
     }
-    assert.match(checkOffering(appStoreV2('JPY'), APP_STORE_EXPECTED).lines[1], /^OK annual: \$rc_annual → puphii_annual_2999, P1Y, ¥4,500 \(4500 JPY\), Free trial: 2 weeks$/);
-    assert.equal(checkOffering(appStoreV2('JPY'), APP_STORE_EXPECTED).lines[3], 'OK weekly: $rc_weekly → puphii_weekly_199, P1W, ¥300 (300 JPY), Free trial: 3 days');
+    assert.match(checkOffering(appStoreV2('JPY'), APP_STORE_EXPECTED).lines[1], /^OK annual: \$rc_annual → puphii_annual_2999, P1Y, ¥4,500 \(4500 JPY\), Free trial: 7 days$/);
+    assert.equal(checkOffering(appStoreV2('JPY'), APP_STORE_EXPECTED).lines[3], 'OK weekly: $rc_weekly → puphii_weekly_199, P1W, ¥300 (300 JPY), no trial');
   });
 
   test('the App Store trial and periods are still judged', () => {
-    assert.match(checkOffering(appStoreV2('USD', null), APP_STORE_EXPECTED).lines[1], /expected a 14-day free trial, found none/);
+    assert.match(checkOffering(appStoreV2('USD', null), APP_STORE_EXPECTED).lines[1], /expected a 7-day free trial, found none/);
     const swapped = checkOffering(
       withV2([pkg('$rc_annual', 'puphii_monthly_499', '$4.99', 'P1M'), pkg('$rc_monthly', 'puphii_annual_2999', '$29.99', 'P1Y', WEEK_TRIAL)]),
       APP_STORE_EXPECTED,

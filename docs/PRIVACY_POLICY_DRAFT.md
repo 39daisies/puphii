@@ -1,6 +1,6 @@
-# Puphii app Privacy Policy: draft section
+# Puphii app Privacy Policy: draft section (legacy excerpt)
 
-**Status: draft, not published.** Puphii has no app Privacy Policy yet. The only policy on the website (`/privacy`, "Privacy & polls") covers the waitlist polls, not the app, and must not be linked from the paywall. This file holds the subscription section that used to sit on the paywall, so it can go into the app's policy once that is written, reviewed and hosted at an `https://` URL. Then set `LEGAL_URLS.privacyPolicy` in `src/subscription/config.ts`.
+**Status: draft, not published.** Prefer the full app draft in `docs/APP_PRIVACY_POLICY.md` (and Terms in `docs/APP_TERMS_OF_USE.md`). The website polls notice must not be linked from the paywall. After owner approval and hosting at a stable `https://` URL, set `LEGAL_URLS.privacyPolicy` in `src/subscription/config.ts`.
 
 The text below was checked against the code as of RevenueCat iOS SDK 5.94.0 (`react-native-purchases` 10.12.2): `src/subscription/revenueCatSdk.ts`, `src/subscription/revenueCat.ts` and the SDK sources under `ios/Pods/RevenueCat/Sources`. Re-check it whenever the SDK, its configuration or the subscription features change. Android has not been reviewed.
 

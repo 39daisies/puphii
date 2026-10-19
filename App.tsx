@@ -5,9 +5,12 @@ import { useFonts } from 'expo-font';
 import { SubscriptionCheckingScreen } from './src/components/SubscriptionGate';
 import { TabBar, TabKey } from './src/components/TabBar';
 import { PepRallyProvider } from './src/data/PepRallyProvider';
-import { PuphiiProvider } from './src/data/PuphiiStore';
+import { PuphiiProvider, usePuphii } from './src/data/PuphiiStore';
 import { useAppSession } from './src/hooks/useAppSession';
 import { FACES } from './src/mascot/faces';
+import { needsFirstLaunchOnboarding } from './src/onboarding/model';
+import { OnboardingScreen } from './src/onboarding/OnboardingScreen';
+import { activeSegment } from './src/plan/schedule';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { INITIAL_INSIGHTS_STATE, InsightsScreen, InsightsState } from './src/screens/InsightsScreen';
 import { PaywallGate, PaywallScreen } from './src/screens/PaywallScreen';
@@ -48,17 +51,55 @@ export default function App() {
   );
 }
 
-/** Resolves subscription before the tab shell. Missing legal URLs never unlock. */
+/**
+ * First-launch: onboarding (plan preview) → paywall → Home.
+ * Returning users with data or completed onboarding skip onboarding.
+ * Missing legal URLs never unlock the app.
+ */
 function AccessRoot() {
   const { access } = useEntitlement();
+  const {
+    ready,
+    appState,
+    logs,
+    skips,
+    plan,
+    onboardingDraft,
+    updateOnboardingDraft,
+    finishOnboarding,
+    activatePendingPlanOnce,
+  } = usePuphii();
   const [lockedDataOpen, setLockedDataOpen] = useState(false);
+
+  const needsOnboarding = needsFirstLaunchOnboarding({
+    ready,
+    onboardingCompletedAt: appState?.onboardingCompletedAt ?? null,
+    firstLaunchSource: appState?.firstLaunchSource ?? null,
+    hasPlanSegments: plan.segments.length > 0 || !!activeSegment(plan),
+    hasLogs: logs.length > 0,
+    hasSkips: skips.length > 0,
+  });
+
+  useEffect(() => {
+    if (access.pro === 'granted') activatePendingPlanOnce();
+  }, [access.pro, activatePendingPlanOnce]);
 
   if (!PRO_GATING_ACTIVE) {
     return <AppShell />;
   }
 
-  if (access.pro === 'checking') {
+  if (!ready || access.pro === 'checking' || onboardingDraft === null) {
     return <SubscriptionCheckingScreen />;
+  }
+
+  if (needsOnboarding) {
+    return (
+      <OnboardingScreen
+        draft={onboardingDraft}
+        onChange={updateOnboardingDraft}
+        onFinished={finishOnboarding}
+      />
+    );
   }
 
   if (access.pro === 'denied') {

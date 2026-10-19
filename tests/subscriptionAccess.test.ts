@@ -102,8 +102,8 @@ describe('subscription-only access policy', () => {
   test('all three plans intend free trials; UI never uses NO_INTRO blocklist', () => {
     assert.equal(PLANS.annual.hasFreeTrial, true);
     assert.equal(PLANS.monthly.hasFreeTrial, true);
-    assert.equal(PLANS.weekly.hasFreeTrial, true);
-    assert.deepEqual(NO_INTRO_OFFER_PLANS, []);
+    assert.equal(PLANS.weekly.hasFreeTrial, false);
+    assert.deepEqual(NO_INTRO_OFFER_PLANS, ['weekly']);
   });
 
   test('default selection prefers annual', () => {

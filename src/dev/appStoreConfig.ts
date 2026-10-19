@@ -6,7 +6,7 @@ import type { ExpectedOffering } from './testStoreHarness';
  * sandbox. The same `default_v2` as the Test Store: each package holds one product per store, and
  * RevenueCat only returns the products of the store the SDK key belongs to. Development builds only.
  *
- * TARGET intros: annual 14d · monthly 7d · weekly 3d (must match ASC before the harness passes).
+ * TARGET intros: annual 7d · monthly 3d · weekly none (must match ASC before the harness passes).
  */
 export const APP_STORE_OFFERING_ID = 'default_v2';
 
@@ -22,21 +22,21 @@ export const APP_STORE_EXPECTED: ExpectedOffering = {
       productId: PLANS.annual.productIds.ios!,
       billingPeriod: PLANS.annual.billingPeriod,
       price: null,
-      freeTrialDays: 14,
+      freeTrialDays: 7,
     },
     monthly: {
       packageId: PLANS.monthly.packageId,
       productId: PLANS.monthly.productIds.ios!,
       billingPeriod: PLANS.monthly.billingPeriod,
       price: null,
-      freeTrialDays: 7,
+      freeTrialDays: 3,
     },
     weekly: {
       packageId: PLANS.weekly.packageId,
       productId: PLANS.weekly.productIds.ios!,
       billingPeriod: PLANS.weekly.billingPeriod,
       price: null,
-      freeTrialDays: 3,
+      freeTrialDays: null,
     },
   },
 };

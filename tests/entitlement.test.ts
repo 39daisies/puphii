@@ -82,7 +82,7 @@ describe('subscription configuration', () => {
     assert.deepEqual(Object.keys(PLANS), ['annual', 'monthly', 'weekly']);
     assert.equal(PLANS.annual.hasFreeTrial, true);
     assert.equal(PLANS.monthly.hasFreeTrial, true);
-    assert.equal(PLANS.weekly.hasFreeTrial, true);
+    assert.equal(PLANS.weekly.hasFreeTrial, false);
     assert.equal(PLANS.annual.billingPeriod, 'P1Y');
     assert.equal(PLANS.monthly.billingPeriod, 'P1M');
     assert.equal(PLANS.weekly.billingPeriod, 'P1W');

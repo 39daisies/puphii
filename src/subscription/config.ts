@@ -18,12 +18,13 @@ export const REVENUECAT_ENTITLEMENT_ID: string | null = 'puphii_pro';
  * and must be shown from the store's product details, never from constants here.
  *
  * TARGET (manual ASC configuration — not proven live by this repo):
- * - Annual $29.99 / year · 14-day free trial
- * - Monthly $4.99 / month · 7-day free trial
- * - Weekly $1.99 / week · 3-day free trial
+ * - Annual $29.99 / year · 7-day free trial
+ * - Monthly $4.99 / month · 3-day free trial
+ * - Weekly $1.99 / week · no introductory offer
  *
  * `hasFreeTrial` records that TARGET intent for harness alignment. The paywall never claims a
- * trial from this flag alone — only from store intro + RevenueCat eligibility.
+ * trial from this flag alone — only from store intro + RevenueCat eligibility (and never for
+ * plans listed in `NO_INTRO_OFFER_PLANS`).
  */
 export type PlanConfig = {
   /**
@@ -42,7 +43,7 @@ export type PlanConfig = {
 export const PLANS: Record<PlanId, PlanConfig> = {
   annual: { productIds: { ios: 'puphii_annual_2999', android: null }, packageId: '$rc_annual', billingPeriod: 'P1Y', hasFreeTrial: true },
   monthly: { productIds: { ios: 'puphii_monthly_499', android: null }, packageId: '$rc_monthly', billingPeriod: 'P1M', hasFreeTrial: true },
-  weekly: { productIds: { ios: 'puphii_weekly_199', android: null }, packageId: '$rc_weekly', billingPeriod: 'P1W', hasFreeTrial: true },
+  weekly: { productIds: { ios: 'puphii_weekly_199', android: null }, packageId: '$rc_weekly', billingPeriod: 'P1W', hasFreeTrial: false },
 };
 
 /**
@@ -52,8 +53,9 @@ export const PLANS: Record<PlanId, PlanConfig> = {
 export const PAYWALL_OFFERING_ID = 'default_v2';
 
 /**
- * Links the paywall must show. Null until the owner publishes the documents: never a placeholder
- * URL. Missing links block purchases and are listed on the paywall; they never unlock the app.
+ * Links the paywall must show. Null until the owner publishes the documents at stable https URLs.
+ * Never a placeholder. Missing links block purchases and are listed on the paywall; they never unlock
+ * the app. Drafts live in `docs/APP_PRIVACY_POLICY.md` and `docs/APP_TERMS_OF_USE.md`.
  */
 export const LEGAL_URLS: { termsOfUse: string | null; privacyPolicy: string | null } = {
   termsOfUse: null,
