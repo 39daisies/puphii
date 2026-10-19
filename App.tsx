@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BackHandler, Image, Modal, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Image, Modal, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { SubscriptionCheckingScreen } from './src/components/SubscriptionGate';
@@ -70,6 +70,8 @@ function AccessRoot() {
     activatePendingPlanOnce,
   } = usePuphii();
   const [lockedDataOpen, setLockedDataOpen] = useState(false);
+  // Ephemeral development-only screen preview. Never changes RevenueCat entitlement or release gating.
+  const [devPreviewOpen, setDevPreviewOpen] = useState(false);
 
   const needsOnboarding = needsFirstLaunchOnboarding({
     ready,
@@ -86,6 +88,12 @@ function AccessRoot() {
 
   if (!PRO_GATING_ACTIVE) {
     return <AppShell />;
+  }
+
+  // This branch is unreachable in production, and the preview has no purchase bypass.
+  // It is deliberately session-only and requires an explicit tap on the locked paywall.
+  if (__DEV__ && devPreviewOpen) {
+    return <AppShell devPreview onExitDevPreview={() => setDevPreviewOpen(false)} />;
   }
 
   if (!ready || access.pro === 'checking' || onboardingDraft === null) {
@@ -110,7 +118,21 @@ function AccessRoot() {
         </Modal>
       );
     }
-    return <PaywallGate onOpenData={() => setLockedDataOpen(true)} />;
+    return (
+      <View style={styles.previewGate}>
+        <PaywallGate onOpenData={() => setLockedDataOpen(true)} />
+        {__DEV__ ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Preview app screens, development only"
+            onPress={() => setDevPreviewOpen(true)}
+            style={styles.devPreviewEntry}
+          >
+            <Text style={styles.devPreviewEntryText}>DEV ONLY · Preview app screens</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
   }
 
   return <AppShell />;
@@ -125,7 +147,7 @@ function LockedDataSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AppShell() {
+function AppShell({ devPreview = false, onExitDevPreview }: { devPreview?: boolean; onExitDevPreview?: () => void } = {}) {
   const [tab, setTab] = useState<TabKey>('home');
   const playSessions = usePlaySessions();
   // The You tab opens on this page; any other way of arriving starts on its main list.
@@ -161,6 +183,14 @@ function AppShell() {
 
   return (
     <View style={styles.shell}>
+      {__DEV__ && devPreview ? (
+        <View style={styles.devPreviewBanner}>
+          <Text style={styles.devPreviewBannerText}>DEV PREVIEW · No subscription granted · Local data may change</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Exit development preview" onPress={onExitDevPreview} hitSlop={10}>
+            <Text style={styles.devPreviewExit}>Exit</Text>
+          </Pressable>
+        </View>
+      ) : null}
       <View style={styles.screen}>
         {tab === 'home' && (
           <HomeScreen
@@ -214,6 +244,12 @@ function FontErrorScreen({ message }: { message: string }) {
 
 const styles = StyleSheet.create({
   shell: { flex: 1, backgroundColor: colors.warmCream },
+  previewGate: { flex: 1 },
+  devPreviewEntry: { position: 'absolute', bottom: 12, alignSelf: 'center', backgroundColor: colors.deepOcean, borderRadius: 18, paddingHorizontal: 18, paddingVertical: 12, zIndex: 10 },
+  devPreviewEntryText: { color: colors.white, fontWeight: '700', fontSize: 12 },
+  devPreviewBanner: { backgroundColor: colors.deepOcean, paddingHorizontal: 12, paddingTop: 6, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  devPreviewBannerText: { color: colors.white, fontSize: 10, flexShrink: 1, paddingRight: 12 },
+  devPreviewExit: { color: colors.white, fontWeight: '700', fontSize: 14 },
   screen: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.skyBlue, padding: 24 },
   loadingMascot: { width: 180, height: 180 },
