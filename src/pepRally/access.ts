@@ -24,7 +24,11 @@ export type PepAccess = PepTier | 'checking' | 'unavailable';
 export const PEP_ACCESS: readonly PepAccess[] = ['pro', 'free', 'checking', 'unavailable'];
 export const isPepAccess = (value: unknown): value is PepAccess => (PEP_ACCESS as readonly unknown[]).includes(value);
 
-/** `gatingActive` is false wherever the paywall is hidden; then global access is granted to everyone, which must not mean Pro here. */
+/**
+ * When subscription enforcement is off (kill switch), nothing new can be added (`unavailable`) —
+ * never treat unlocked freemium as Pro. When enforcement is on, granted → Pro limits; denied →
+ * free limits for any leftover library ops (the app shell already blocks normal use).
+ */
 export function pepAccessFor(pro: ProAccess, gatingActive: boolean): PepAccess {
   if (!gatingActive) return 'unavailable';
   if (pro === 'granted') return 'pro';

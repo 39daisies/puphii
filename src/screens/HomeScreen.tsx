@@ -13,13 +13,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText } from '../components/AppText';
 import { Banner } from '../components/Banner';
 import { Bar, BarChart } from '../components/BarChart';
-import { IconButton, PrimaryButton, SecondaryButton } from '../components/Buttons';
+import { CompactButton, IconButton, MODE_LOG_HEIGHT, ModeLogButton, SecondaryButton } from '../components/Buttons';
 import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
 import { ReefBackdrop, SwimmingPuphii } from '../components/ReefScene';
 import { Wordmark } from '../components/Wordmark';
 import { formatAverage, periodRange, periodSeries, summarizePeriod } from '../data/insights';
 import { countOnDay, dayKeyOfLog, localDayKey } from '../data/puffLogic';
+import { latestSkipToday } from '../data/skips';
 import { usePuphii } from '../data/PuphiiStore';
 import { useAppActive } from '../hooks/useAppActive';
 import { useReducedMotion } from '../hooks/useReducedMotion';
@@ -34,27 +35,30 @@ import {
   HOME_NEW_GOAL_LABEL,
   HOME_NEW_GOAL_TEXT,
   HOME_TARGET_TITLE,
-  homeTargetLine,
   MANAGE_ACTIONS,
   OPEN_PLAN_HINT,
-  planWeekLine,
+  puffUnit,
   RESUMED_NOTICE,
   TODAY_TITLE,
-  todayNote,
   WEEK_CHART_SPOKEN_TITLE,
   weekSummaryLine,
   YOUR_PLAN_ROW,
 } from '../plan/copy';
+import { targetCardModel } from '../plan/targetCard';
 import { homePlanView, unseenMilestones } from '../plan/view';
-import { playPuffSound, puffHaptic, selectionHaptic } from '../services/feedback';
+import { playPuffSound, playSkipSound, puffHaptic, selectionHaptic } from '../services/feedback';
 import { colors, fontFamilies, MAX_CONTENT_WIDTH, radii, shadows, spacing, TOUCH_TARGET } from '../theme';
 import { formatFullDay, formatTime, formatWeekday, pluralize } from '../utils/format';
 import { MilestoneNotice } from './plan/MilestoneNotice';
 import { ChartLegend } from './plan/PlanDashboard';
 import { planBars } from './plan/planBars';
+import { SkipMilestoneNotice } from './plan/SkipMilestoneNotice';
 
 const CARD_PADDING = spacing.xl;
 const MOTION_BUTTON_HEIGHT = 36;
+const PLAN_LINK_HEIGHT = 32;
+
+type HomeMode = 'puff' | 'skip';
 
 type Props = {
   onOpenSettings: () => void;
@@ -78,7 +82,22 @@ export function HomeScreen({
   inviteHidden,
   onHideInvite,
 }: Props) {
-  const { ready, logs, settings, addPuff, undoLatestToday, storageError, dismissStorageError, plan, planActions } = usePuphii();
+  const {
+    ready,
+    logs,
+    skips,
+    settings,
+    addPuff,
+    undoLatestToday,
+    addSkip,
+    undoLatestSkipToday,
+    unseenSkipMilestoneIds,
+    acknowledgeSkipMilestones,
+    storageError,
+    dismissStorageError,
+    plan,
+    planActions,
+  } = usePuphii();
   const today = useToday();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
@@ -86,6 +105,7 @@ export function HomeScreen({
   const appActive = useAppActive();
   const mascotRef = useRef<MascotHandle>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [mode, setMode] = useState<HomeMode>('puff');
   const [scene, setScene] = useState({ width: 0, height: 0 });
   const onSceneLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -96,13 +116,20 @@ export function HomeScreen({
   const todayCount = useMemo(() => countOnDay(logs, today), [logs, today]);
   const latest = logs.length ? logs[logs.length - 1] : null;
   const canUndo = ready && !!latest && dayKeyOfLog(latest) === todayKey;
+  const skipsToday = useMemo(() => countOnDay(skips, today), [skips, today]);
+  const canUndoSkip = ready && latestSkipToday(skips, todayKey) !== null;
+  const isPuff = mode === 'puff';
+  const heroCount = isPuff ? todayCount : skipsToday;
+  const accent = isPuff ? colors.deepOcean : colors.seafoam;
+  const accentInk = isPuff ? colors.deepOcean : colors.textPrimaryStrong;
+  const canUndoMode = isPuff ? canUndo : canUndoSkip;
+  const digits = String(heroCount).length;
 
   const tall = height >= 800;
   const compact = height < 700;
   const contentWidth = Math.min(width, MAX_CONTENT_WIDTH) - spacing.xl * 2;
   // The card's 1 pt border sits outside the scene.
   const sceneWidth = scene.width || contentWidth - 2;
-  const digits = String(todayCount).length;
   const layout = useMemo(() => reefLayout({ sceneWidth, screenHeight: height, digits }), [sceneWidth, height, digits]);
   const sceneHeight = scene.height || layout.sceneMinHeight;
   const sectionGap = tall ? spacing.xl : spacing.lg;
@@ -124,6 +151,7 @@ export function HomeScreen({
   }, [logs, today, todayKey]);
 
   const planView = useMemo(() => (ready ? homePlanView(plan, logs, todayKey) : null), [ready, plan, logs, todayKey]);
+  const targetCard = useMemo(() => (planView?.kind === 'plan' ? targetCardModel(planView) : null), [planView]);
   const invite =
     planView?.kind === 'invite' && planView.ended
       ? { label: HOME_NEW_GOAL_LABEL, text: HOME_NEW_GOAL_TEXT, dismiss: HOME_NEW_GOAL_DISMISS }
@@ -144,21 +172,29 @@ export function HomeScreen({
 
   const newMilestoneIds = useMemo(() => (ready ? unseenMilestones(plan).map((milestone) => milestone.id) : []), [ready, plan]);
   const acknowledgeMilestones = useCallback(() => planActions.markMilestonesSeen(newMilestoneIds), [planActions, newMilestoneIds]);
+  const dismissSkipMilestones = useCallback(
+    () => acknowledgeSkipMilestones(unseenSkipMilestoneIds),
+    [acknowledgeSkipMilestones, unseenSkipMilestoneIds],
+  );
 
   const resumePlan = useCallback(() => {
     if (planActions.resume().ok) AccessibilityInfo.announceForAccessibility(RESUMED_NOTICE);
   }, [planActions]);
 
   const bump = useRef(new Animated.Value(1)).current;
-  const previousCount = useRef(todayCount);
+  const previousHero = useRef({ mode, count: heroCount });
   useEffect(() => {
-    if (todayCount > previousCount.current) {
+    if (previousHero.current.mode !== mode) {
+      previousHero.current = { mode, count: heroCount };
+      return;
+    }
+    if (heroCount > previousHero.current.count) {
       bump.stopAnimation();
       bump.setValue(1.12);
       Animated.spring(bump, { toValue: 1, friction: 4, tension: 160, useNativeDriver: true }).start();
     }
-    previousCount.current = todayCount;
-  }, [todayCount, bump]);
+    previousHero.current = { mode, count: heroCount };
+  }, [heroCount, mode, bump]);
 
   const onPuff = useCallback(() => {
     const log = addPuff();
@@ -179,8 +215,44 @@ export function HomeScreen({
     AccessibilityInfo.announceForAccessibility('Last puff removed');
   }, [undoLatestToday, settings.hapticsEnabled]);
 
+  const onSkip = useCallback(() => {
+    const skip = addSkip();
+    if (!skip) return;
+    mascotRef.current?.cheer();
+    if (settings.hapticsEnabled) selectionHaptic();
+    if (settings.soundEnabled) playSkipSound();
+    setStatus(`Skip logged at ${formatTime(skip.timestamp)}`);
+    AccessibilityInfo.announceForAccessibility('Skip logged');
+  }, [addSkip, settings.hapticsEnabled, settings.soundEnabled]);
+
+  const onUndoSkip = useCallback(() => {
+    const removed = undoLatestSkipToday();
+    if (!removed) return;
+    if (settings.hapticsEnabled) selectionHaptic();
+    setStatus(`Removed the ${formatTime(removed.timestamp)} skip`);
+    AccessibilityInfo.announceForAccessibility('Last skip removed');
+  }, [undoLatestSkipToday, settings.hapticsEnabled]);
+
+  const latestSkip = canUndoSkip ? latestSkipToday(skips, todayKey) : null;
   const statusText =
-    status ?? (latest && canUndo ? `Last logged at ${formatTime(latest.timestamp)}` : 'Log each puff as it happens.');
+    status ??
+    (isPuff
+      ? latest && canUndo
+        ? `Last logged at ${formatTime(latest.timestamp)}`
+        : 'Log each puff as it happens.'
+      : latestSkip
+        ? `Skip logged at ${formatTime(latestSkip.timestamp)}`
+        : 'Log a skip when you choose not to act on an urge.');
+
+  const selectMode = useCallback(
+    (next: HomeMode) => {
+      if (next === mode) return;
+      setMode(next);
+      setStatus(null);
+      if (settings.hapticsEnabled) selectionHaptic();
+    },
+    [mode, settings.hapticsEnabled],
+  );
 
   return (
     <View style={styles.root}>
@@ -202,22 +274,25 @@ export function HomeScreen({
           <View style={[styles.heroScene, { minHeight: layout.sceneMinHeight }]} onLayout={onSceneLayout}>
             <ReefBackdrop width={scene.width} height={scene.height} running={animating} />
             <View
-              style={[styles.countPlate, { width: layout.plateWidth }]}
+              style={[styles.countPlate, { width: layout.plateWidth, borderColor: accent }]}
               accessible
-              accessibilityLabel={`Today's count: ${pluralize(todayCount, 'puff')}`}
+              accessibilityLabel={
+                isPuff ? `Today's count: ${pluralize(heroCount, 'puff')}` : `Today's skips: ${pluralize(heroCount, 'skip')}`
+              }
             >
-              <AppText variant="label" color={colors.textMuted}>
-                Today's count
+              <AppText variant="label" color={accentInk}>
+                {isPuff ? "Today's count" : "Today's skips"}
               </AppText>
               <Animated.View style={[styles.countWrap, { transform: [{ scale: bump }] }]}>
                 <AppText
                   variant="count"
+                  color={accentInk}
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   maxFontSizeMultiplier={1}
                   style={{ fontSize: layout.countSize, lineHeight: Math.round(layout.countSize * 1.1) }}
                 >
-                  {todayCount}
+                  {heroCount}
                 </AppText>
               </Animated.View>
             </View>
@@ -246,51 +321,132 @@ export function HomeScreen({
         </Card>
 
         <View style={styles.actions}>
-          <PrimaryButton
-            label="+ Log a puff"
-            accessibilityLabel="Log a puff"
-            accessibilityHint="Records one puff with the current time"
-            onPress={onPuff}
-            disabled={!ready}
-          />
-          <SecondaryButton
-            label="Undo"
-            icon="undo"
-            accessibilityLabel="Undo last puff"
-            accessibilityHint="Removes the most recent puff logged today"
-            onPress={onUndo}
-            disabled={!canUndo}
-          />
+          <View
+            style={styles.modeSwitch}
+            accessibilityRole="tablist"
+            accessibilityLabel="Counter mode"
+          >
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected: isPuff }}
+              accessibilityLabel="Puffs"
+              onPress={() => selectMode('puff')}
+              style={[styles.modeTab, isPuff && { backgroundColor: colors.coralPink }]}
+            >
+              <AppText variant="buttonSecondary" color={isPuff ? colors.coralInk : colors.textMuted} align="center">
+                Puffs
+              </AppText>
+            </Pressable>
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityState={{ selected: !isPuff }}
+              accessibilityLabel="Skips"
+              onPress={() => selectMode('skip')}
+              style={[styles.modeTab, !isPuff && { backgroundColor: colors.seafoam }]}
+            >
+              <AppText variant="buttonSecondary" color={!isPuff ? colors.textPrimaryStrong : colors.textMuted} align="center">
+                Skips
+              </AppText>
+            </Pressable>
+          </View>
+          <View style={styles.actionRow}>
+            <ModeLogButton
+              label={isPuff ? '+ Puff' : '+ Skip'}
+              tone={isPuff ? 'coral' : 'mint'}
+              accessibilityLabel={isPuff ? 'Log a puff' : `Log a skip. ${pluralize(skipsToday, 'skip')} today`}
+              accessibilityHint={
+                isPuff
+                  ? 'Records one puff with the current time'
+                  : 'Records an urge you chose not to act on. It is not counted as a puff'
+              }
+              onPress={isPuff ? onPuff : onSkip}
+              disabled={!ready}
+              style={styles.flex}
+            />
+            <CompactButton
+              label="Undo"
+              icon="undo"
+              height={MODE_LOG_HEIGHT}
+              accessibilityLabel={isPuff ? 'Undo last puff' : 'Undo last skip'}
+              accessibilityHint={
+                isPuff
+                  ? 'Removes the most recent puff logged today'
+                  : 'Removes the most recent skip logged today. Puffs are not changed'
+              }
+              onPress={isPuff ? onUndo : onUndoSkip}
+              disabled={!canUndoMode}
+            />
+          </View>
         </View>
 
         {newMilestoneIds.length ? (
           <MilestoneNotice ids={newMilestoneIds} onOpen={onOpenPlan} onDismiss={acknowledgeMilestones} />
         ) : null}
 
-        {planView?.kind === 'plan' ? (
-          <Card style={styles.weekCard}>
-            <View style={styles.weekHeader}>
-              <View style={styles.flex} accessible accessibilityRole="header">
-                <AppText variant="cardTitle">{planView.paused ? TODAY_TITLE : HOME_TARGET_TITLE}</AppText>
-                <AppText variant="caption">{planWeekLine(planView.week, planView.paused)}</AppText>
+        {unseenSkipMilestoneIds.length ? (
+          <SkipMilestoneNotice ids={unseenSkipMilestoneIds} onDismiss={dismissSkipMilestones} />
+        ) : null}
+
+        {planView?.kind === 'plan' && targetCard ? (
+          <Card style={styles.targetCard}>
+            <View style={styles.targetHeader}>
+              <View style={styles.flex}>
+                <AppText variant="overline" accessibilityRole="header" style={styles.targetTitle}>
+                  {planView.paused ? TODAY_TITLE : HOME_TARGET_TITLE}
+                </AppText>
+                <AppText variant="caption" numberOfLines={1}>
+                  {targetCard.weekLine}
+                </AppText>
               </View>
               <Pressable
                 accessibilityRole="link"
                 accessibilityLabel={YOUR_PLAN_ROW}
                 accessibilityHint={OPEN_PLAN_HINT}
                 onPress={onOpenPlan}
-                hitSlop={8}
-                style={({ pressed }) => [styles.seeAll, pressed && { opacity: 0.6 }]}
+                hitSlop={(TOUCH_TARGET - PLAN_LINK_HEIGHT) / 2}
+                style={({ pressed }) => [styles.planLink, pressed && { opacity: 0.6 }]}
               >
-                <AppText variant="label" color={colors.textPrimary} style={styles.seeAllText}>
+                <AppText variant="caption" color={colors.textPrimary} style={styles.seeAllText}>
                   {YOUR_PLAN_ROW}
                 </AppText>
-                <Icon name="chevronRight" size={18} color={colors.textPrimary} />
+                <Icon name="chevronRight" size={16} color={colors.textPrimary} />
               </Pressable>
             </View>
-            <AppText variant="sectionTitle">{homeTargetLine(planView.progress)}</AppText>
-            <AppText variant="bodySmall" color={colors.textPrimary}>
-              {todayNote(planView.progress)}
+            <View style={styles.targetRow} accessible accessibilityLabel={targetCard.spoken}>
+              <AppText variant="statValue" numberOfLines={1} adjustsFontSizeToFit style={styles.targetCount}>
+                {targetCard.count}
+                {targetCard.target === null ? null : (
+                  <AppText variant="statValue" color={colors.textMuted} style={styles.targetOf}>
+                    {` / ${targetCard.target}`}
+                  </AppText>
+                )}
+                <AppText variant="label" color={colors.textMuted}>
+                  {` ${puffUnit(targetCard.target ?? targetCard.count)}`}
+                </AppText>
+              </AppText>
+              <View style={[styles.targetBadge, targetCard.tone === 'above' && styles.targetBadgeAbove]}>
+                <AppText variant="caption" color={targetCard.tone === 'above' ? colors.coralInk : colors.textPrimary} style={styles.seeAllText}>
+                  {targetCard.badge}
+                </AppText>
+              </View>
+            </View>
+            {targetCard.fill === null ? null : (
+              <View style={styles.targetTrack} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                <View
+                  style={[
+                    styles.targetFill,
+                    { width: `${Math.round(targetCard.fill * 100)}%` as const },
+                    targetCard.tone === 'above' && styles.targetFillAbove,
+                  ]}
+                />
+              </View>
+            )}
+            <AppText variant="caption" style={styles.skipContext}>
+              {skipsToday > 0
+                ? `${pluralize(skipsToday, 'skip')} today · ${pluralize(skips.length, 'skip')} total. Skips don't change this target.`
+                : skips.length > 0
+                  ? `${pluralize(skips.length, 'skip')} logged overall. Skips don't change this target.`
+                  : `Skips don't change this target.`}
             </AppText>
             {planView.paused ? (
               <SecondaryButton
@@ -392,6 +548,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xs,
     borderRadius: radii.lg,
     backgroundColor: colors.warmCream,
+    borderWidth: 2,
     ...shadows.soft,
   },
   countWrap: { alignSelf: 'flex-start' },
@@ -399,9 +556,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs + 2,
-    minHeight: 52,
+    minHeight: TOUCH_TARGET,
     paddingHorizontal: CARD_PADDING,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.borderStrong,
   },
@@ -417,11 +574,49 @@ const styles = StyleSheet.create({
     borderColor: colors.oceanBlue,
   },
   motionLabel: { fontFamily: fontFamilies.semibold },
-  actions: { gap: spacing.md },
+  actions: { gap: spacing.sm },
+  modeSwitch: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    padding: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceGlass,
+    borderWidth: 1.5,
+    borderColor: colors.oceanBlue,
+  },
+  modeTab: {
+    flex: 1,
+    minHeight: TOUCH_TARGET,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+  },
+  actionRow: { flexDirection: 'row', gap: spacing.sm },
   weekCard: { padding: spacing.lg, gap: spacing.md },
   weekHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   seeAll: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingLeft: spacing.sm },
   seeAllText: { fontFamily: fontFamilies.semibold },
+  targetCard: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, gap: spacing.sm },
+  targetHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  targetTitle: { textTransform: 'uppercase' },
+  planLink: { flexDirection: 'row', alignItems: 'center', gap: spacing.xxs, minHeight: PLAN_LINK_HEIGHT, paddingLeft: spacing.sm },
+  targetRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  targetCount: { flex: 1, fontSize: 30, lineHeight: 34 },
+  targetOf: { fontSize: 24 },
+  targetBadge: {
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.skyBlue,
+    borderWidth: 1,
+    borderColor: colors.oceanBlue,
+  },
+  targetBadgeAbove: { backgroundColor: colors.peach, borderColor: colors.coralPink },
+  targetTrack: { height: 8, borderRadius: radii.pill, backgroundColor: colors.border, overflow: 'hidden' },
+  targetFill: { height: '100%', borderRadius: radii.pill, backgroundColor: colors.deepOcean },
+  targetFillAbove: { backgroundColor: colors.coralDeep },
+  skipContext: { marginTop: spacing.xxs },
   inviteCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.sm, paddingLeft: spacing.lg, paddingRight: spacing.xs },
   inviteMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 44, paddingVertical: spacing.xs },
 });

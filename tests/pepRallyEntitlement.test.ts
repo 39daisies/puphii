@@ -335,17 +335,14 @@ describe('Pep Rallies while subscription status is still being checked', () => {
 });
 
 describe('Pep Rally access guards', () => {
-  test('where the paywall is hidden, nothing new can be added for anyone, and existing recordings stay usable', () => {
+  test('when subscription enforcement is off, Pep Rallies stay unavailable for new adds', () => {
     for (const pro of ['granted', 'denied', 'checking'] as ProAccess[]) assert.equal(pepAccessFor(pro, false), 'unavailable');
-    const release = proGatingActive({ enabled: SUBSCRIPTION_GATING_ENABLED, paywallAvailable: showPaywallEntry(false), storeReady: true });
-    assert.equal(release, false, 'release builds hide the paywall until the legal links are set');
-    const everyoneUnlocked = accessFor(ENTITLEMENTS.neverSubscribed, { gatingEnabled: release, allowMock: false }).pro;
-    assert.equal(everyoneUnlocked, 'granted', 'global access stays as it is');
-    const access = pepAccessFor(everyoneUnlocked, release);
-    assert.equal(access, 'unavailable', 'but it never means Pro for Pep Rallies');
+    const enforced = proGatingActive({ enabled: SUBSCRIPTION_GATING_ENABLED });
+    assert.equal(enforced, true);
+    assert.equal(accessFor(ENTITLEMENTS.neverSubscribed, { gatingEnabled: enforced, allowMock: false }).pro, 'denied');
 
     const library = saveAll(defaultPepLibrary(), 'free', 1);
-    const results = probe(library, access);
+    const results = probe(library, 'unavailable');
     assert.deepEqual(new Set(Object.values(results)), new Set(['unavailable']), JSON.stringify(results));
     const [rally] = visibleRallies(library);
     assert.ok(markPlayed(library, rally.id, NOW).ok);
@@ -374,7 +371,7 @@ describe('Pep Rally access guards', () => {
     for (const enabled of [true, false]) {
       for (const paywallAvailable of [true, false]) {
         for (const storeReady of [true, false]) {
-          assert.equal(proGatingActive({ enabled, paywallAvailable, storeReady }), enabled && paywallAvailable && storeReady);
+          assert.equal(proGatingActive({ enabled, paywallAvailable, storeReady }), enabled);
         }
       }
     }
@@ -390,7 +387,7 @@ describe('Pep Rally access guards', () => {
       { annual: 'puphii_annual_2999', monthly: 'puphii_monthly_499', weekly: 'puphii_weekly_199' },
     );
     assert.deepEqual(TEST_STORE_PRODUCT_IDS, { annual: 'yearly_2999', monthly: 'monthly_499', weekly: 'weekly_199' });
-    assert.deepEqual(Object.keys(PRO_FEATURE_BENEFITS), ['monthlyYearlyTrends', 'pastPeriods', 'extendedHistory', 'spendingProjections']);
+    assert.deepEqual(Object.keys(PRO_FEATURE_BENEFITS), []);
   });
 });
 

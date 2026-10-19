@@ -6,7 +6,6 @@ import { Card } from '../components/Card';
 import { NumberField, TextField } from '../components/Fields';
 import { Icon } from '../components/Icon';
 import { OptionSheet } from '../components/OptionSheet';
-import { ProGate, useProFeature } from '../components/ProGate';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { periodRange, summarizePeriod } from '../data/insights';
 import { usePuphii } from '../data/PuphiiStore';
@@ -33,7 +32,6 @@ import {
 } from '../data/savings';
 import { useToday } from '../hooks/useToday';
 import { FACES } from '../mascot/faces';
-import { SPENDING_PROJECTIONS } from '../subscription/proFeatures';
 import { colors, fontFamilies, MAX_CONTENT_WIDTH, radii, spacing, TOUCH_TARGET } from '../theme';
 import { pluralize } from '../utils/format';
 
@@ -44,7 +42,7 @@ export function SavingsScreen({ header }: { header: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const today = useToday();
   const [currencyOpen, setCurrencyOpen] = useState(false);
-  const projections = useProFeature(SPENDING_PROJECTIONS);
+  const projections = true;
 
   const type = savings.productType;
   const product = PRODUCTS[type];
@@ -211,8 +209,7 @@ export function SavingsScreen({ header }: { header: React.ReactNode }) {
           )}
         </Card>
 
-        <ProGate feature={SPENDING_PROJECTIONS}>
-          <Card style={[styles.card, styles.resultCard, !hasEstimate && styles.messageCard]}>
+        <Card style={[styles.card, styles.resultCard, !hasEstimate && styles.messageCard]}>
             <AppText variant="cardTitle" accessibilityRole="header">
               If you used less
             </AppText>
@@ -335,7 +332,6 @@ export function SavingsScreen({ header }: { header: React.ReactNode }) {
               )}
             </View>
           </Card>
-        </ProGate>
 
         <Card style={[styles.card, styles.compactCard]}>
           <AppText variant="cardTitle" accessibilityRole="header">
@@ -346,7 +342,7 @@ export function SavingsScreen({ header }: { header: React.ReactNode }) {
           </AppText>
           <AppText variant="caption" style={styles.note}>
             Puff counts aren't turned into money here. A puff isn't a fixed amount of product, so these estimates use only what you
-            entered above.
+            entered above. Skips have no monetary value and are not included.
           </AppText>
         </Card>
 

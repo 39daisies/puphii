@@ -200,7 +200,7 @@ describe('Home: wiring', () => {
 
   test("Today's target, the chart's targets and the invitation each appear only in their state", () => {
     assert.match(home, /homePlanView\(plan, logs, todayKey\)/);
-    assert.match(home, /\{planView\?\.kind === 'plan' \? \(\s*<Card/);
+    assert.match(home, /\{planView\?\.kind === 'plan' && targetCard \? \(\s*<Card/);
     assert.match(home, /\{planView\?\.kind === 'invite' && !inviteHidden \? \(/);
     assert.match(home, /<BarChart data=\{chartBars\} height=\{compact \? 44 : 56\} accessibilityTitle=\{WEEK_CHART_SPOKEN_TITLE\} \/>/);
     assert.match(home, /<BarChart data=\{chartBars\} height=\{compact \? 44 : 56\} \/>/, 'without a plan the chart is unchanged');
@@ -216,7 +216,7 @@ describe('Home: wiring', () => {
   });
 
   test("Today's target card cannot be hidden, whether the plan is active or paused", () => {
-    const start = home.indexOf("{planView?.kind === 'plan' ? (");
+    const start = home.indexOf("{planView?.kind === 'plan' && targetCard ? (");
     const card = home.slice(start, home.indexOf('</Card>', start));
     assert.ok(start > 0 && card.includes('HOME_TARGET_TITLE'), 'found the target card');
     assert.ok(!/IconButton|icon="close"|inviteHidden|Hide|Dismiss/.test(card), 'no X or hiding on the target card');
@@ -244,7 +244,7 @@ describe('Home: wiring', () => {
     assert.match(app, /setYouPage\('plan'\);\s*setTab\('you'\);/);
     assert.match(app, /if \(tab !== 'you'\) setYouPage\('main'\);/);
     assert.match(app, /<YouStartPage\.Provider value=\{youPage\}>/);
-    assert.match(settings, /const startPage = useContext\(YouStartPage\);\s*const \[page, setPage\] = useState<Page>\(startPage\);/);
+    assert.match(settings, /const startPage = useContext\(YouStartPage\);\s*const \[page, setPage\] = useState<Page>\(lockedToData \? 'data' : startPage\);/);
   });
 
   test('basic planning on Home stays free', () => {

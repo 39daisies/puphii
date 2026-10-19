@@ -144,7 +144,7 @@ function TestStoreScreen({ onClose }: { onClose: () => void }) {
             ))}
             <Text style={styles.body}>
               Puphii Pro access: {access.pro}
-              {PRO_GATING_ACTIVE ? '' : ' (gating inactive: every feature stays available)'}
+              {PRO_GATING_ACTIVE ? '' : ' (subscription enforcement off: kill switch)'}
             </Text>
             <Text style={styles.muted}>{keyDescription()}</Text>
             <Text style={styles.muted}>Entitlement identifier: {REVENUECAT_ENTITLEMENT_ID ?? 'not set in config.ts'}</Text>

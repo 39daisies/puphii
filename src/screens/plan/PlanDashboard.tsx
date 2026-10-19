@@ -6,7 +6,8 @@ import { PrimaryButton, SecondaryButton } from '../../components/Buttons';
 import { Card } from '../../components/Card';
 import { Icon } from '../../components/Icon';
 import { SectionHeader } from '../../components/SettingsRows';
-import { PuffLog } from '../../data/types';
+import { countOnDay } from '../../data/puffLogic';
+import { PuffLog, SkipLog } from '../../data/types';
 import { FACES } from '../../mascot/faces';
 import {
   averagesLine,
@@ -52,6 +53,7 @@ import {
   weekChartDays,
 } from '../../plan/view';
 import { colors, fontFamilies, spacing } from '../../theme';
+import { pluralize } from '../../utils/format';
 import { ActionRow, Badge } from './controls';
 import { longDay, planBars } from './planBars';
 
@@ -61,6 +63,8 @@ type Props = {
   plan: PlanRecord;
   segment: PlanSegment;
   logs: readonly PuffLog[];
+  /** Shown as context only — never feeds target math. */
+  skips: readonly SkipLog[];
   today: DayKey;
   paused: boolean;
   newMilestones: readonly MilestoneId[];
@@ -69,13 +73,15 @@ type Props = {
 };
 
 /** The active plan: today, this week against its targets, milestones, details and changes. */
-export function PlanDashboard({ plan, segment, logs, today, paused, newMilestones, onConfirmZero, onManage }: Props) {
+export function PlanDashboard({ plan, segment, logs, skips, today, paused, newMilestones, onConfirmZero, onManage }: Props) {
   const progress = todayProgress(plan, logs, today);
   const week = displayPlanWeek(plan, today) ?? 1;
   const next = nextTargetChanges(plan, today)[0];
   const settled = !paused && !next && progress.kind === 'active' && progress.atSettleLevel;
   const headline = homeTargetLine(progress);
   const note = todayNote(progress);
+  const todayDate = new Date(`${today}T12:00:00`);
+  const skipsToday = countOnDay(skips, todayDate);
 
   return (
     <>
@@ -101,6 +107,13 @@ export function PlanDashboard({ plan, segment, logs, today, paused, newMilestone
         ) : null}
         {next ? <AppText variant="bodySmall">{nextChangeLine(next.target, longDay(next.day))}</AppText> : null}
         {settled ? <AppText variant="bodySmall">{settledLine(segment.goal)}</AppText> : null}
+        <AppText variant="caption" color={colors.textMuted}>
+          {skipsToday > 0
+            ? `${pluralize(skipsToday, 'skip')} today · ${pluralize(skips.length, 'skip')} total. Skips don't change plan targets.`
+            : skips.length > 0
+              ? `${pluralize(skips.length, 'skip')} logged overall. Skips don't change plan targets.`
+              : `Skips don't change plan targets.`}
+        </AppText>
         {paused ? (
           <PrimaryButton label={MANAGE_ACTIONS.resume.label} accessibilityHint={MANAGE_ACTIONS.resume.detail} onPress={() => onManage('resume')} />
         ) : progress.kind === 'active' && progress.count === 0 ? (

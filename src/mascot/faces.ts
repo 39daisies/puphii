@@ -18,11 +18,47 @@ export const FACES = {
   dizzy: require('../../assets/puffy/dizzy.png'),
   furiousSteam: require('../../assets/puffy/furious_steam.png'),
   recovering: require('../../assets/puffy/recovering.png'),
-  /** Squinting with a lit cigarette and translucent smoke; cut out from a black background. */
-  smokySquint: require('../../assets/puffy/smoky_squint.png'),
+  /** Puff-log reactions only — never Skip cheer. */
+  puffSurprised: require('../../assets/puffy/puff_surprised.png'),
+  puffExhaling: require('../../assets/puffy/puff_exhaling.png'),
+  puffStraining: require('../../assets/puffy/puff_straining.png'),
+  puffDizzyBubbles: require('../../assets/puffy/puff_dizzyBubbles.png'),
+  puffNervous: require('../../assets/puffy/puff_nervous.png'),
+  puffDreamy: require('../../assets/puffy/puff_dreamy.png'),
+  puffAngry: require('../../assets/puffy/puff_angry.png'),
+  puffSleeping: require('../../assets/puffy/puff_sleeping.png'),
+  puffSad: require('../../assets/puffy/puff_sad.png'),
+  puffShouting: require('../../assets/puffy/puff_shouting.png'),
+  puffCrying: require('../../assets/puffy/puff_crying.png'),
+  puffScared: require('../../assets/puffy/puff_scared.png'),
+  /** Skip cheer only — never puff reactions. */
+  skipProud: require('../../assets/puffy/skip_proud.png'),
+  skipWink: require('../../assets/puffy/skip_wink.png'),
+  skipWiggle: require('../../assets/puffy/skip_wiggle.png'),
+  skipGrateful: require('../../assets/puffy/skip_grateful.png'),
+  skipVictory: require('../../assets/puffy/skip_victory.png'),
+  skipRelief: require('../../assets/puffy/skip_relief.png'),
+  skipStarry: require('../../assets/puffy/skip_starry.png'),
+  skipDance: require('../../assets/puffy/skip_dance.png'),
+  skipTears: require('../../assets/puffy/skip_tears.png'),
+  skipChampion: require('../../assets/puffy/skip_champion.png'),
 } satisfies Record<string, ImageSourcePropType>;
 
 export type FaceName = keyof typeof FACES;
+
+/** Cycles on each successful Skip. Smiling / positive only. */
+export const SKIP_CHEER_FACES: readonly FaceName[] = [
+  'skipProud',
+  'skipWink',
+  'skipWiggle',
+  'skipGrateful',
+  'skipVictory',
+  'skipRelief',
+  'skipStarry',
+  'skipDance',
+  'skipTears',
+  'skipChampion',
+];
 
 /**
  * Happy idle sprites for the Home reef: side-on (facing left) and facing the viewer. Re-framed
@@ -40,14 +76,24 @@ export type ReactionSpec = {
   duration: number;
 };
 
+/**
+ * Puff-log reactions only. Never include smiling / Skip cheer faces (`happy`, `recovering`,
+ * `skip*`). Emotion-sheet faces only.
+ */
 export const REACTIONS: Record<ReactionMode, ReactionSpec> = {
-  minimal: { faces: ['curious', 'winking'], duration: 550 },
-  expressive: { faces: ['coughing', 'annoyed', 'exasperated', 'smokySquint'], duration: 850 },
-  dramatic: { faces: ['furiousSteam', 'dizzy'], duration: 1000 },
+  minimal: { faces: ['puffNervous', 'puffDreamy'], duration: 550 },
+  expressive: {
+    faces: ['puffSurprised', 'puffExhaling', 'puffStraining', 'puffDizzyBubbles', 'puffSad', 'puffSleeping'],
+    duration: 850,
+  },
+  dramatic: {
+    faces: ['puffAngry', 'puffShouting', 'puffScared', 'puffCrying', 'puffExhaling'],
+    duration: 1000,
+  },
 };
 
 export const MODE_COPY: Record<ReactionMode, { title: string; subtitle: string; thumbnail: FaceName }> = {
-  minimal: { title: 'Minimal', subtitle: 'A subtle reaction.', thumbnail: 'happy' },
-  expressive: { title: 'Expressive', subtitle: 'A clear reaction.', thumbnail: 'coughing' },
-  dramatic: { title: 'Dramatic', subtitle: 'A big, manga-style reaction.', thumbnail: 'dizzy' },
+  minimal: { title: 'Minimal', subtitle: 'A subtle reaction.', thumbnail: 'puffNervous' },
+  expressive: { title: 'Expressive', subtitle: 'A clear reaction.', thumbnail: 'puffExhaling' },
+  dramatic: { title: 'Dramatic', subtitle: 'A big, manga-style reaction.', thumbnail: 'puffAngry' },
 };

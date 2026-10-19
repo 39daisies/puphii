@@ -1,6 +1,6 @@
 import { formatMonthDay, formatMonthYear } from '../utils/format';
 import { addLocalDays, countsByDay, localDayKey } from './puffLogic';
-import { PuffLog } from './types';
+import { TimedEvent } from './types';
 
 export type InsightsPeriod = 'week' | 'month' | 'year';
 
@@ -62,7 +62,7 @@ function sumDays(counts: Map<string, number>, from: Date, days: number): number 
 }
 
 /** One point per day for weeks and months, one per calendar month for years. Zero days are kept. */
-export function periodSeries(logs: readonly PuffLog[], range: PeriodRange): ChartPoint[] {
+export function periodSeries(logs: readonly TimedEvent[], range: PeriodRange): ChartPoint[] {
   const counts = countsByDay(logs);
   if (range.period !== 'year') {
     return Array.from({ length: range.days }, (_, i) => {
@@ -105,7 +105,7 @@ export type PeriodSummary = {
   comparison: Comparison;
 };
 
-function earliestLogDayKey(logs: readonly PuffLog[]): string | null {
+function earliestLogDayKey(logs: readonly TimedEvent[]): string | null {
   let earliest = Infinity;
   for (const log of logs) {
     const time = new Date(log.timestamp).getTime();
@@ -114,7 +114,7 @@ function earliestLogDayKey(logs: readonly PuffLog[]): string | null {
   return Number.isFinite(earliest) ? localDayKey(new Date(earliest)) : null;
 }
 
-export function summarizePeriod(logs: readonly PuffLog[], range: PeriodRange): PeriodSummary {
+export function summarizePeriod(logs: readonly TimedEvent[], range: PeriodRange): PeriodSummary {
   const counts = countsByDay(logs);
   let total = 0;
   let daysWithLogs = 0;
@@ -151,7 +151,7 @@ export function summarizePeriod(logs: readonly PuffLog[], range: PeriodRange): P
 }
 
 /** The earliest offset worth navigating to: the period that contains the first log. */
-export function earliestOffset(logs: readonly PuffLog[], period: InsightsPeriod, today: Date): number {
+export function earliestOffset(logs: readonly TimedEvent[], period: InsightsPeriod, today: Date): number {
   const earliest = earliestLogDayKey(logs);
   if (!earliest) return 0;
   const [y, m, d] = earliest.split('-').map(Number);
@@ -225,7 +225,7 @@ export function dayPartOf(date: Date): DayPart {
 export type DayPartShare = { part: DayPart; count: number; percent: number };
 
 /** Logs in the elapsed part of `range`, grouped by local time of day. Percentages sum to 100. */
-export function timeOfDayBreakdown(logs: readonly PuffLog[], range: PeriodRange): { total: number; parts: DayPartShare[] } {
+export function timeOfDayBreakdown(logs: readonly TimedEvent[], range: PeriodRange): { total: number; parts: DayPartShare[] } {
   const from = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate()).getTime();
   const lastDay = addLocalDays(range.start, range.elapsedDays);
   const to = new Date(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate()).getTime();

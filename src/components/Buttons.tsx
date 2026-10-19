@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, View, ViewStyle } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
-import { colors, radii, shadows, spacing, TOUCH_TARGET } from '../theme';
+import { colors, fontFamilies, radii, shadows, spacing, TOUCH_TARGET } from '../theme';
 import { AppText } from './AppText';
 import { Icon, IconName } from './Icon';
 
@@ -15,6 +15,43 @@ type BaseProps = {
 };
 
 const PRIMARY_HEIGHT = 64;
+
+/** Shared height for Home's + Puff / + Skip so both modes match Undo. */
+export const MODE_LOG_HEIGHT = PRIMARY_HEIGHT;
+
+const MODE_TONES = {
+  coral: { fill: colors.coralPink, ink: colors.coralInk, border: colors.coralDeep },
+  mint: { fill: colors.seafoam, ink: colors.textPrimaryStrong, border: colors.deepOcean },
+} as const;
+
+type ModeLogProps = BaseProps & { tone: keyof typeof MODE_TONES };
+
+/** Equal-weight Home log control: coral for puffs, mint for skips. */
+export function ModeLogButton({ label, tone, onPress, disabled, accessibilityLabel, accessibilityHint, style }: ModeLogProps) {
+  const palette = MODE_TONES[tone];
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled: !!disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.modeLog,
+        { backgroundColor: palette.fill, borderColor: palette.border },
+        shadows.button,
+        pressed && styles.primaryPressed,
+        disabled && styles.disabled,
+        style,
+      ]}
+    >
+      <AppText variant="button" color={palette.ink} align="center">
+        {label}
+      </AppText>
+    </Pressable>
+  );
+}
 
 export function PrimaryButton({ label, onPress, disabled, accessibilityLabel, accessibilityHint, style }: BaseProps) {
   const [width, setWidth] = useState(0);
@@ -68,9 +105,9 @@ export function PrimaryButton({ label, onPress, disabled, accessibilityLabel, ac
   );
 }
 
-type SecondaryProps = BaseProps & { icon?: IconName };
+type SecondaryProps = BaseProps & { icon?: IconName; /** A short second line under the label. */ detail?: string };
 
-export function SecondaryButton({ label, onPress, disabled, icon, accessibilityLabel, accessibilityHint, style }: SecondaryProps) {
+export function SecondaryButton({ label, onPress, disabled, icon, detail, accessibilityLabel, accessibilityHint, style }: SecondaryProps) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -82,7 +119,40 @@ export function SecondaryButton({ label, onPress, disabled, icon, accessibilityL
       style={({ pressed }) => [styles.secondary, shadows.soft, pressed && styles.secondaryPressed, disabled && styles.disabled, style]}
     >
       {icon ? <Icon name={icon} size={20} color={colors.textPrimary} strokeWidth={2.1} /> : null}
-      <AppText variant="buttonSecondary">{label}</AppText>
+      {detail ? (
+        <View style={styles.secondaryStack}>
+          <AppText variant="buttonSecondary" numberOfLines={1}>
+            {label}
+          </AppText>
+          <AppText variant="caption" numberOfLines={1}>
+            {detail}
+          </AppText>
+        </View>
+      ) : (
+        <AppText variant="buttonSecondary">{label}</AppText>
+      )}
+    </Pressable>
+  );
+}
+
+type CompactProps = BaseProps & { icon: IconName; height?: number };
+
+/** An icon over a short label, sized to sit beside a full-width action. */
+export function CompactButton({ label, icon, onPress, disabled, accessibilityLabel, accessibilityHint, height = 52, style }: CompactProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ disabled: !!disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [styles.compact, { height }, shadows.soft, pressed && styles.secondaryPressed, disabled && styles.disabled, style]}
+    >
+      <Icon name={icon} size={20} color={colors.textPrimary} strokeWidth={2.1} />
+      <AppText variant="caption" color={colors.textPrimary} numberOfLines={1} style={styles.compactLabel}>
+        {label}
+      </AppText>
     </Pressable>
   );
 }
@@ -96,12 +166,14 @@ const DIALOG_TONES = {
   destructiveOutline: { container: { backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.danger }, text: colors.danger },
 } as const;
 
-export function DialogButton({ label, onPress, tone = 'neutral', style }: DialogButtonProps) {
+export function DialogButton({ label, onPress, tone = 'neutral', disabled, style }: DialogButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled: !!disabled }}
+      disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.dialogButton, DIALOG_TONES[tone].container, pressed && { opacity: 0.85 }, style]}
+      style={({ pressed }) => [styles.dialogButton, DIALOG_TONES[tone].container, pressed && { opacity: 0.85 }, disabled && styles.disabled, style]}
     >
       <AppText variant="label" color={DIALOG_TONES[tone].text} align="center">
         {label}
@@ -150,6 +222,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.coralDeep,
     overflow: 'visible',
   },
+  modeLog: {
+    height: MODE_LOG_HEIGHT,
+    borderRadius: MODE_LOG_HEIGHT / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xxl,
+    borderWidth: 2,
+  },
   primaryPressed: { transform: [{ scale: 0.98 }] },
   disabled: { opacity: 0.5 },
   secondary: {
@@ -165,6 +245,18 @@ const styles = StyleSheet.create({
     borderColor: colors.oceanBlue,
   },
   secondaryPressed: { backgroundColor: colors.skyBlue },
+  secondaryStack: { alignItems: 'center' },
+  compact: {
+    width: 80,
+    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xxs,
+    backgroundColor: colors.surfaceGlass,
+    borderWidth: 1.5,
+    borderColor: colors.oceanBlue,
+  },
+  compactLabel: { fontFamily: fontFamilies.semibold },
   dialogButton: {
     flex: 1,
     minHeight: 50,

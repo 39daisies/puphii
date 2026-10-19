@@ -1,5 +1,6 @@
+import { isPuffProduct, isPuffUnit } from './productMeta';
 import { withUnknownFields } from './preserve';
-import { DEFAULT_SETTINGS, PuffLog, REACTION_MODES, ReactionMode, Settings } from './types';
+import { DEFAULT_SETTINGS, PuffLog, PuffProduct, PuffUnit, REACTION_MODES, ReactionMode, Settings, TimedEvent } from './types';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
@@ -8,7 +9,7 @@ export function localDayKey(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-export function dayKeyOfLog(log: PuffLog): string {
+export function dayKeyOfLog(log: TimedEvent): string {
   return localDayKey(new Date(log.timestamp));
 }
 
@@ -27,7 +28,7 @@ export function msUntilNextLocalMidnight(now: Date): number {
   return Math.max(0, next.getTime() - now.getTime());
 }
 
-export function countsByDay(logs: readonly PuffLog[]): Map<string, number> {
+export function countsByDay(logs: readonly TimedEvent[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const log of logs) {
     const key = dayKeyOfLog(log);
@@ -36,7 +37,7 @@ export function countsByDay(logs: readonly PuffLog[]): Map<string, number> {
   return counts;
 }
 
-export function countOnDay(logs: readonly PuffLog[], date: Date): number {
+export function countOnDay(logs: readonly TimedEvent[], date: Date): number {
   const key = localDayKey(date);
   let total = 0;
   for (const log of logs) if (dayKeyOfLog(log) === key) total += 1;
@@ -46,7 +47,7 @@ export function countOnDay(logs: readonly PuffLog[], date: Date): number {
 export type DayPoint = { key: string; date: Date; count: number };
 
 /** Oldest-first series of `days` local days ending with `today`. */
-export function dailySeries(logs: readonly PuffLog[], today: Date, days: number): DayPoint[] {
+export function dailySeries(logs: readonly TimedEvent[], today: Date, days: number): DayPoint[] {
   const counts = countsByDay(logs);
   return Array.from({ length: days }, (_, index) => {
     const date = addLocalDays(today, index - (days - 1));
@@ -58,7 +59,7 @@ export function dailySeries(logs: readonly PuffLog[], today: Date, days: number)
 export type WeekPoint = { key: string; start: Date; count: number };
 
 /** Oldest-first rolling 7-day buckets; the last bucket ends with `today`. */
-export function weeklySeries(logs: readonly PuffLog[], today: Date, weeks: number): WeekPoint[] {
+export function weeklySeries(logs: readonly TimedEvent[], today: Date, weeks: number): WeekPoint[] {
   const days = dailySeries(logs, today, weeks * 7);
   return Array.from({ length: weeks }, (_, index) => {
     const slice = days.slice(index * 7, index * 7 + 7);
@@ -102,11 +103,19 @@ export function removeLogById(logs: readonly PuffLog[], id: string): PuffLog[] {
   return logs.filter((log) => log.id !== id);
 }
 
+export type CreateLogOptions = {
+  product?: PuffProduct;
+  unit?: PuffUnit;
+};
+
 let idCounter = 0;
-export function createLog(now: Date = new Date()): PuffLog {
+export function createLog(now: Date = new Date(), options: CreateLogOptions = {}): PuffLog {
   idCounter = (idCounter + 1) % 1_000_000;
   const id = `${now.getTime().toString(36)}-${idCounter.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  return { id, timestamp: now.toISOString() };
+  const log: PuffLog = { id, timestamp: now.toISOString() };
+  if (options.product) log.product = options.product;
+  if (options.unit) log.unit = options.unit;
+  return log;
 }
 
 export function sanitizeLogs(raw: unknown): PuffLog[] {
@@ -115,11 +124,15 @@ export function sanitizeLogs(raw: unknown): PuffLog[] {
   const result: PuffLog[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
-    const { id, timestamp } = item as Record<string, unknown>;
+    const { id, timestamp, product, unit } = item as Record<string, unknown>;
     if (typeof id !== 'string' || typeof timestamp !== 'string') continue;
     if (Number.isNaN(new Date(timestamp).getTime()) || seen.has(id)) continue;
     seen.add(id);
-    result.push(withUnknownFields(item, { id, timestamp }));
+    const known: PuffLog = { id, timestamp };
+    // Only keep explicit product/unit values. Missing fields stay missing so legacy logs remain unknown.
+    if (isPuffProduct(product)) known.product = product;
+    if (isPuffUnit(unit)) known.unit = unit;
+    result.push(withUnknownFields(item, known));
   }
   return result;
 }

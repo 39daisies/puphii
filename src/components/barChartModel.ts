@@ -1,5 +1,8 @@
 import { pluralize } from '../utils/format';
 
+/** Chart accent family: coral for puffs, seafoam mint for skips. */
+export type BarTone = 'coral' | 'mint';
+
 export type Bar = {
   key: string;
   value: number;
@@ -16,6 +19,8 @@ export type Bar = {
   untracked?: boolean;
   /** Replaces the spoken count, e.g. "plan paused, 3 logged puffs". */
   spokenValue?: string;
+  /** Defaults to coral (puffs). Use mint for skip charts. */
+  tone?: BarTone;
 };
 
 /** Tallest value the chart scales to: bars, plus targets where given. */

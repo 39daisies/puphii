@@ -4,14 +4,18 @@ import { PepLibrary } from '../pepRally/model';
 import { PlanEventListener } from '../plan/events';
 import { defaultPlan, PlanRecord } from '../plan/model';
 import { AppState } from './appState';
-import { createPepRallyController } from './pepRallyController';
+import { createPepRallyController, PepRallyController } from './pepRallyController';
 import { createPlanController, PlanActions } from './planController';
+import { productMetaFor } from './productMeta';
 import { createLog, dayKeyOfLog, latestRecordedLog, localDayKey, removeLogById } from './puffLogic';
 import { RESET_KEYS, resetValues } from './reset';
+import { ResetOutcome, resetOutcomeOf } from './resetOutcome';
 import { defaultSavings, deviceCurrency, SavingsSettings } from './savings';
+import { defaultSkipMilestones, SkipMilestoneId, SkipMilestoneState, unseenSkipMilestones } from './skipMilestones';
+import { createSkip, latestSkipToday } from './skips';
 import { CORRUPT_DATA_MESSAGE, loadPersistedState, removeCorruptBackups, STORAGE_KEYS, writeJson } from './storage';
 import { StorageKey } from './storageKeys';
-import { DEFAULT_SETTINGS, PuffLog, Settings } from './types';
+import { DEFAULT_SETTINGS, PuffLog, Settings, SkipLog } from './types';
 import { createWriteQueue } from './writeQueue';
 
 type PuphiiStore = {
@@ -26,9 +30,22 @@ type PuphiiStore = {
   addPuff: () => PuffLog | null;
   /** Removes the most recently recorded log if it belongs to today. */
   undoLatestToday: () => PuffLog | null;
+  /** Urges the person chose not to act on. Kept apart from `logs`, so they never count as puffs or touch the plan. */
+  skips: SkipLog[];
+  /** Records exactly one skip. Returns null until persisted state has loaded. */
+  addSkip: () => SkipLog | null;
+  /** Removes the most recently recorded skip if it belongs to today. Never touches puff logs. */
+  undoLatestSkipToday: () => SkipLog | null;
+  /** Cumulative skip milestones already acknowledged. */
+  skipMilestones: SkipMilestoneState;
+  /** Skip milestones reached but not yet acknowledged. */
+  unseenSkipMilestoneIds: SkipMilestoneId[];
+  /** Marks the given skip milestones as seen so they never celebrate again. */
+  acknowledgeSkipMilestones: (ids: readonly SkipMilestoneId[]) => void;
   deleteLog: (id: string) => void;
   clearLogs: () => void;
-  resetAll: () => void;
+  /** Resolves with what could be confirmed. Never `done` unless every recording is confirmed gone. */
+  resetAll: () => Promise<ResetOutcome>;
   updateSettings: (patch: Partial<Settings>) => void;
   savings: SavingsSettings;
   /** Receives the latest calculator settings, so quick successive edits never overwrite each other. */
@@ -45,6 +62,7 @@ type PuphiiStore = {
 };
 
 const StoreContext = createContext<PuphiiStore | null>(null);
+const PepRallyControllerContext = createContext<PepRallyController | null>(null);
 
 const SAVE_ERROR = "Couldn't save to this device. Your latest changes may be lost if the app closes.";
 const DELETE_ERROR = "Some older saved data couldn't be deleted. Please try clearing again.";
@@ -52,6 +70,8 @@ const DELETE_ERROR = "Some older saved data couldn't be deleted. Please try clea
 export function PuphiiProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [logs, setLogs] = useState<PuffLog[]>([]);
+  const [skips, setSkips] = useState<SkipLog[]>([]);
+  const [skipMilestones, setSkipMilestones] = useState<SkipMilestoneState>(() => defaultSkipMilestones());
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [savings, setSavings] = useState<SavingsSettings>(() => defaultSavings(deviceCurrency()));
   const [gameStats, setGameStats] = useState<GameStats>(DEFAULT_GAME_STATS);
@@ -61,6 +81,8 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
 
   // Refs are the synchronous source of truth so rapid taps never read stale state.
   const logsRef = useRef<PuffLog[]>([]);
+  const skipsRef = useRef<SkipLog[]>([]);
+  const skipMilestonesRef = useRef<SkipMilestoneState>(defaultSkipMilestones());
   const settingsRef = useRef<Settings>(DEFAULT_SETTINGS);
   const savingsRef = useRef<SavingsSettings>(savings);
   const gameStatsRef = useRef<GameStats>(DEFAULT_GAME_STATS);
@@ -81,6 +103,8 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       savings: queue<SavingsSettings>(STORAGE_KEYS.savings),
       game: queue<GameStats>(STORAGE_KEYS.game),
       plan: queue<PlanRecord>(STORAGE_KEYS.plan),
+      skips: queue<SkipLog[]>(STORAGE_KEYS.skips),
+      skipMilestones: queue<SkipMilestoneState>(STORAGE_KEYS.skipMilestones),
     };
   }, []);
 
@@ -90,7 +114,7 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     [queues],
   );
 
-  // Pep Rally metadata, kept apart from logs and the plan. No screen uses it yet, and no media store is attached.
+  // Pep Rally metadata, kept apart from logs and the plan. PepRallyProvider connects access; no screen uses it yet, and no media store is attached.
   const pepRallyController = useMemo(() => {
     const write = writeJson<PepLibrary>(STORAGE_KEYS.pepRallies);
     return createPepRallyController({
@@ -105,10 +129,14 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     loadPersistedState().then((result) => {
       if (!mounted) return;
       logsRef.current = result.logs;
+      skipsRef.current = result.skips;
+      skipMilestonesRef.current = result.skipMilestones;
       settingsRef.current = result.settings;
       savingsRef.current = result.savings;
       gameStatsRef.current = result.gameStats;
       setLogs(result.logs);
+      setSkips(result.skips);
+      setSkipMilestones(result.skipMilestones);
       setSettings(result.settings);
       setSavings(result.savings);
       setGameStats(result.gameStats);
@@ -137,7 +165,8 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
 
   const addPuff = useCallback(() => {
     if (!readyRef.current) return null;
-    const log = createLog();
+    const meta = productMetaFor(savingsRef.current.productType);
+    const log = createLog(new Date(), meta);
     commitLogs([...logsRef.current, log]);
     return log;
   }, [commitLogs]);
@@ -156,6 +185,54 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       commitLogs(removeLogById(logsRef.current, id));
     },
     [commitLogs],
+  );
+
+  const commitSkips = useCallback(
+    (next: SkipLog[]) => {
+      skipsRef.current = next;
+      setSkips(next);
+      queues.skips.save(next);
+    },
+    [queues],
+  );
+
+  const addSkip = useCallback(() => {
+    if (!readyRef.current) return null;
+    const skip = createSkip();
+    commitSkips([...skipsRef.current, skip]);
+    return skip;
+  }, [commitSkips]);
+
+  const undoLatestSkipToday = useCallback(() => {
+    if (!readyRef.current) return null;
+    const latest = latestSkipToday(skipsRef.current, localDayKey(new Date()));
+    if (!latest) return null;
+    commitSkips(skipsRef.current.slice(0, -1));
+    return latest;
+  }, [commitSkips]);
+
+  const commitSkipMilestones = useCallback(
+    (next: SkipMilestoneState) => {
+      skipMilestonesRef.current = next;
+      setSkipMilestones(next);
+      queues.skipMilestones.save(next);
+    },
+    [queues],
+  );
+
+  const acknowledgeSkipMilestones = useCallback(
+    (ids: readonly SkipMilestoneId[]) => {
+      if (!readyRef.current || !ids.length) return;
+      const seen = new Set(skipMilestonesRef.current.seen);
+      ids.forEach((id) => seen.add(id));
+      commitSkipMilestones({ seen: [...seen] });
+    },
+    [commitSkipMilestones],
+  );
+
+  const unseenSkipMilestoneIds = useMemo(
+    () => unseenSkipMilestones(skips.length, skipMilestones.seen),
+    [skips.length, skipMilestones.seen],
   );
 
   const purgeBackups = useCallback((keys: StorageKey[]) => {
@@ -208,10 +285,12 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     [queues],
   );
 
-  const resetAll = useCallback(() => {
-    if (!readyRef.current) return;
+  const resetAll = useCallback(async (): Promise<ResetOutcome> => {
+    if (!readyRef.current) return 'notFinished';
     const reset = resetValues(deviceCurrency());
     commitLogs(reset.logs);
+    commitSkips(reset.skips);
+    commitSkipMilestones(reset.skipMilestones);
     gameStatsRef.current = reset.gameStats;
     setGameStats(gameStatsRef.current);
     queues.game.save(gameStatsRef.current);
@@ -221,10 +300,11 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     savingsRef.current = reset.savings;
     setSavings(savingsRef.current);
     queues.savings.save(savingsRef.current);
-    void pepRallyController.reset();
+    const recordings = pepRallyController.reset();
     planController.reset();
     purgeBackups([...RESET_KEYS]);
-  }, [commitLogs, queues, planController, pepRallyController, purgeBackups]);
+    return resetOutcomeOf(await recordings.catch(() => null));
+  }, [commitLogs, commitSkips, commitSkipMilestones, queues, planController, pepRallyController, purgeBackups]);
 
   const value = useMemo<PuphiiStore>(
     () => ({
@@ -236,6 +316,12 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       dismissStorageError: () => setStorageError(null),
       addPuff,
       undoLatestToday,
+      skips,
+      addSkip,
+      undoLatestSkipToday,
+      skipMilestones,
+      unseenSkipMilestoneIds,
+      acknowledgeSkipMilestones,
       deleteLog,
       clearLogs,
       resetAll,
@@ -260,6 +346,12 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
       storageError,
       addPuff,
       undoLatestToday,
+      skips,
+      addSkip,
+      undoLatestSkipToday,
+      skipMilestones,
+      unseenSkipMilestoneIds,
+      acknowledgeSkipMilestones,
       deleteLog,
       clearLogs,
       resetAll,
@@ -269,7 +361,18 @@ export function PuphiiProvider({ children }: { children: React.ReactNode }) {
     ],
   );
 
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  return (
+    <StoreContext.Provider value={value}>
+      <PepRallyControllerContext.Provider value={pepRallyController}>{children}</PepRallyControllerContext.Provider>
+    </StoreContext.Provider>
+  );
+}
+
+/** The controller this store loads and resets. Only PepRallyProvider reads it; screens use that provider. */
+export function useStorePepRallyController(): PepRallyController {
+  const controller = useContext(PepRallyControllerContext);
+  if (!controller) throw new Error('useStorePepRallyController must be used inside <PuphiiProvider>');
+  return controller;
 }
 
 export function usePuphii(): PuphiiStore {

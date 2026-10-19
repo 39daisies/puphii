@@ -14,6 +14,7 @@ import { NavRow, SectionHeader, ToggleRow } from '../components/SettingsRows';
 import { Wordmark } from '../components/Wordmark';
 import { groupLogsByDay } from '../data/puffLogic';
 import { usePuphii } from '../data/PuphiiStore';
+import { createResetRunner, RESET_OUTCOME_MESSAGE, RESET_TRY_AGAIN_LABEL, RESETTING_LABEL } from '../data/resetOutcome';
 import { REACTION_MODES, ReactionMode } from '../data/types';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 import { FACES, MODE_COPY } from '../mascot/faces';
@@ -45,23 +46,37 @@ const timeLabel = (hour: number, minute: number) => formatTime(new Date(2026, 0,
 
 /**
  * `footer` is only ever passed by development builds; release builds show the screen without it.
- * The Puphii Pro row appears only when `onOpenPro` is passed.
+ * `onOpenPro` opens manage-subscription / restore. `lockedToData` is for the paywall gate sheet.
  */
-export function SettingsScreen({ footer, onOpenPro }: { footer?: React.ReactNode; onOpenPro?: () => void }) {
+export function SettingsScreen({
+  footer,
+  onOpenPro,
+  lockedToData,
+  onLockedBack,
+}: {
+  footer?: React.ReactNode;
+  onOpenPro?: () => void;
+  lockedToData?: boolean;
+  onLockedBack?: () => void;
+}) {
   const insets = useSafeAreaInsets();
   const startPage = useContext(YouStartPage);
-  const [page, setPage] = useState<Page>(startPage);
+  const [page, setPage] = useState<Page>(lockedToData ? 'data' : startPage);
 
   useEffect(() => {
-    if (page === 'main') return;
+    if (page === 'main' && !lockedToData) return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (lockedToData) {
+        onLockedBack?.();
+        return true;
+      }
       setPage('main');
       return true;
     });
     return () => subscription.remove();
-  }, [page]);
+  }, [page, lockedToData, onLockedBack]);
 
-  const back = () => setPage('main');
+  const back = () => (lockedToData ? onLockedBack?.() : setPage('main'));
   const scrollRef = useRef<ScrollView>(null);
   const reducedMotion = useReducedMotion();
   const scrollTop = useCallback(() => scrollRef.current?.scrollTo({ y: 0, animated: !reducedMotion }), [reducedMotion]);
@@ -81,12 +96,12 @@ export function SettingsScreen({ footer, onOpenPro }: { footer?: React.ReactNode
         keyboardDismissMode="interactive"
         automaticallyAdjustKeyboardInsets
       >
-        {page === 'main' && <MainSettings onNavigate={setPage} onOpenPro={onOpenPro} />}
-        {page === 'plan' && <PlanPage onBack={back} onScrollTop={scrollTop} />}
-        {page === 'reminders' && <RemindersPage onBack={back} />}
-        {page === 'data' && <DataPage onBack={back} />}
-        {page === 'about' && <AboutPage onBack={back} />}
-        {page === 'main' && footer}
+        {page === 'main' && !lockedToData ? <MainSettings onNavigate={setPage} onOpenPro={onOpenPro} /> : null}
+        {page === 'plan' && !lockedToData ? <PlanPage onBack={back} onScrollTop={scrollTop} /> : null}
+        {page === 'reminders' && !lockedToData ? <RemindersPage onBack={back} /> : null}
+        {page === 'data' ? <DataPage onBack={back} /> : null}
+        {page === 'about' && !lockedToData ? <AboutPage onBack={back} /> : null}
+        {page === 'main' && !lockedToData ? footer : null}
       </ScrollView>
     </View>
   );
@@ -173,7 +188,9 @@ function MainSettings({ onNavigate, onOpenPro }: { onNavigate: (page: Page) => v
 
       <SectionHeader title="App Settings" />
       <Card style={styles.group}>
-        {onOpenPro ? <NavRow icon="heart" label="Puphii Pro" detail={proStatusLabel(entitlement)} onPress={onOpenPro} /> : null}
+        {onOpenPro ? (
+          <NavRow icon="heart" label="Subscription" detail={proStatusLabel(entitlement) ?? 'Manage'} onPress={onOpenPro} />
+        ) : null}
         <NavRow
           icon="bell"
           label="Reminders"
@@ -282,6 +299,22 @@ function DataPage({ onBack }: { onBack: () => void }) {
   const { logs, clearLogs, resetAll, storageError, dismissStorageError } = usePuphii();
   const [confirm, setConfirm] = useState<'history' | 'all' | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [resetRunner] = useState(createResetRunner);
+  const [resetting, setResetting] = useState(false);
+  const [resetIncomplete, setResetIncomplete] = useState(false);
+
+  const startReset = () => {
+    if (resetRunner.running) return;
+    setDone(null);
+    setResetIncomplete(false);
+    setResetting(true);
+    void resetRunner.run(resetAll, cancelDailyReminder).then((outcome) => {
+      if (!outcome) return;
+      setResetting(false);
+      setDone(RESET_OUTCOME_MESSAGE[outcome]);
+      setResetIncomplete(outcome !== 'done');
+    });
+  };
 
   const days = groupLogsByDay(logs);
   const first = days.length ? days[days.length - 1].date : null;
@@ -316,13 +349,22 @@ function DataPage({ onBack }: { onBack: () => void }) {
       {done ? (
         <View style={styles.spaced}>
           <Banner message={done} onDismiss={() => setDone(null)} />
+          {resetIncomplete ? (
+            <DialogButton label={RESET_TRY_AGAIN_LABEL} tone="destructiveOutline" disabled={resetting} onPress={startReset} style={styles.retryButton} />
+          ) : null}
         </View>
       ) : null}
 
       <SectionHeader title="Clear data" caption="These actions can't be undone." />
       <View style={styles.dangerActions}>
         <DialogButton label="Clear puff history" tone="destructive" onPress={() => setConfirm('history')} style={styles.dangerButton} />
-        <DialogButton label="Reset everything" tone="destructiveOutline" onPress={() => setConfirm('all')} style={styles.dangerButton} />
+        <DialogButton
+          label={resetting ? RESETTING_LABEL : 'Reset everything'}
+          tone="destructiveOutline"
+          disabled={resetting}
+          onPress={() => setConfirm('all')}
+          style={styles.dangerButton}
+        />
       </View>
 
       <ConfirmDialog
@@ -334,6 +376,7 @@ function DataPage({ onBack }: { onBack: () => void }) {
         onConfirm={() => {
           clearLogs();
           setConfirm(null);
+          setResetIncomplete(false);
           setDone('Puff history cleared.');
         }}
       />
@@ -344,10 +387,8 @@ function DataPage({ onBack }: { onBack: () => void }) {
         confirmLabel="Reset"
         onCancel={() => setConfirm(null)}
         onConfirm={() => {
-          resetAll();
-          void cancelDailyReminder();
           setConfirm(null);
-          setDone('Puphii has been reset.');
+          startReset();
         }}
       />
     </>
@@ -446,6 +487,7 @@ const styles = StyleSheet.create({
   statSmall: { fontSize: 18, lineHeight: 32 },
   dangerActions: { gap: spacing.md },
   dangerButton: { flex: 0 },
+  retryButton: { flex: 0, marginTop: spacing.sm },
   aboutHero: { alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xl },
   aboutMascot: { width: 140, height: 140 },
   tagline: { marginTop: spacing.xs },

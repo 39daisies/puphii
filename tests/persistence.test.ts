@@ -145,7 +145,17 @@ describe('legacy data migration', () => {
     for (let version = 1; version < CURRENT_SCHEMA_VERSION; version += 1) {
       assert.equal(MIGRATIONS.filter((migration) => migration.from === version && migration.to === version + 1).length, 1);
     }
-    const raw = { logs: [], settings: null, savings: null, game: null, appState: null, plan: null, pepRallies: null };
+    const raw = {
+      logs: [],
+      settings: null,
+      savings: null,
+      game: null,
+      appState: null,
+      plan: null,
+      pepRallies: null,
+      skips: null,
+      skipMilestones: null,
+    };
     const once = runMigrations(raw, 1, { now: NOW });
     const twice = runMigrations(once.data, 1, { now: LATER });
     assert.deepEqual(twice.data, once.data);
@@ -283,9 +293,13 @@ describe('malformed data', () => {
       [STORAGE_KEYS.game]: 7,
       [STORAGE_KEYS.plan]: [3],
       [STORAGE_KEYS.pepRallies]: JSON.stringify('rallies'),
+      [STORAGE_KEYS.skips]: { skips: 3 },
+      [STORAGE_KEYS.skipMilestones]: { seen: 'nope' },
     });
     const result = await load(store);
     assert.deepEqual(result.logs, []);
+    assert.deepEqual(result.skips, []);
+    assert.deepEqual(result.skipMilestones, { seen: [] });
     assert.deepEqual(result.settings, DEFAULT_SETTINGS);
     assert.deepEqual(result.gameStats, { roundsCompleted: 0, bestScore: 0 });
     assert.deepEqual(result.plan, defaultPlan());
@@ -319,6 +333,8 @@ describe('reset', () => {
   test('resets user data and its copies, but keeps lifecycle state and other apps’ keys', async () => {
     const store = new MemoryStore({
       ...LEGACY,
+      [STORAGE_KEYS.skips]: [{ id: 's1', timestamp: NOW.toISOString() }],
+      [`${STORAGE_KEYS.skips}-invalid-5`]: '{}',
       [`${STORAGE_KEYS.logs}-corrupt-1`]: 'x',
       [`${STORAGE_KEYS.settings}-invalid-2`]: '{}',
       [`${STORAGE_KEYS.savings}-premigration-3`]: '{}',
@@ -336,6 +352,8 @@ describe('reset', () => {
       [STORAGE_KEYS.game, JSON.stringify(reset.gameStats)],
       [STORAGE_KEYS.plan, JSON.stringify(reset.plan)],
       [STORAGE_KEYS.pepRallies, JSON.stringify(defaultPepLibrary())],
+      [STORAGE_KEYS.skips, JSON.stringify(reset.skips)],
+      [STORAGE_KEYS.skipMilestones, JSON.stringify(reset.skipMilestones)],
     ]);
     await removeSetAsideCopies(store, RESET_KEYS);
 
@@ -345,6 +363,7 @@ describe('reset', () => {
     );
     const after = await load(store, { now: LATER });
     assert.deepEqual(after.logs, []);
+    assert.deepEqual(after.skips, []);
     assert.deepEqual(after.settings, DEFAULT_SETTINGS);
     assert.deepEqual(after.savings, defaultSavings('USD'));
     assert.deepEqual(after.gameStats, { roundsCompleted: 0, bestScore: 0 });

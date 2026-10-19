@@ -11,15 +11,27 @@ import { SavingsScreen } from './SavingsScreen';
 
 export type InsightsSection = 'overview' | 'savings' | 'history' | 'learn';
 
+/** Which event stream Insights Overview and History are showing. */
+export type InsightsEventKind = 'puffs' | 'skips' | 'compare';
+
 /** Kept by the app shell so each section's selections survive switching sections and tabs. */
 export type InsightsState = {
   section: InsightsSection;
   period: InsightsPeriod;
   offset: number;
   historyRange: HistoryRange;
+  eventKind: InsightsEventKind;
+  historyKind: 'puffs' | 'skips';
 };
 
-export const INITIAL_INSIGHTS_STATE: InsightsState = { section: 'overview', period: 'week', offset: 0, historyRange: 'week' };
+export const INITIAL_INSIGHTS_STATE: InsightsState = {
+  section: 'overview',
+  period: 'week',
+  offset: 0,
+  historyRange: 'week',
+  eventKind: 'puffs',
+  historyKind: 'puffs',
+};
 
 const SECTIONS = [
   { value: 'overview', label: 'Overview' },
@@ -44,14 +56,24 @@ export function InsightsScreen({ state, onChange }: Props) {
         header={header}
         period={state.period}
         offset={state.offset}
+        eventKind={state.eventKind}
         onPeriodChange={(period) => onChange({ period, offset: 0 })}
         onOffsetChange={(offset) => onChange({ offset })}
+        onEventKindChange={(eventKind) => onChange({ eventKind, offset: 0 })}
       />
     );
   }
   if (state.section === 'savings') return <SavingsScreen header={header} />;
   if (state.section === 'history') {
-    return <HistoryScreen header={header} range={state.historyRange} onRangeChange={(historyRange) => onChange({ historyRange })} />;
+    return (
+      <HistoryScreen
+        header={header}
+        range={state.historyRange}
+        eventKind={state.historyKind}
+        onRangeChange={(historyRange) => onChange({ historyRange })}
+        onEventKindChange={(historyKind) => onChange({ historyKind })}
+      />
+    );
   }
   return <LearnScreen header={header} />;
 }

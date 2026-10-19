@@ -6,8 +6,10 @@ import { CURRENT_SCHEMA_VERSION, Migration, RawData, readSchemaVersion, runMigra
 import { isPreserved } from './preserve';
 import { sanitizeLogs, sanitizeSettings } from './puffLogic';
 import { defaultSavings, sanitizeSavings, SavingsSettings } from './savings';
+import { defaultSkipMilestones, sanitizeSkipMilestones, SkipMilestoneState } from './skipMilestones';
+import { sanitizeSkips } from './skips';
 import { SetAsideReason, setAsideKey, setAsideKeysFor, StorageKey, STORAGE_KEYS, USER_DATA_KEYS } from './storageKeys';
-import { DEFAULT_SETTINGS, PuffLog, Settings } from './types';
+import { DEFAULT_SETTINGS, PuffLog, Settings, SkipLog } from './types';
 
 /** The subset of AsyncStorage that persistence uses, so it can run against an in-memory store in tests. */
 export interface KeyValueStore {
@@ -30,6 +32,8 @@ export type LoadResult = {
   plan: PlanRecord;
   /** Empty until the first Pep Rally is saved. */
   pepRallies: PepLibrary;
+  skips: SkipLog[];
+  skipMilestones: SkipMilestoneState;
   /** Null only when storage couldn't be read at all. */
   appState: AppState | null;
   /** Schema version of the data as loaded (higher than current if a newer Puphii wrote it). */
@@ -50,6 +54,8 @@ const DATA_KEYS: Record<DataName, StorageKey> = {
   appState: STORAGE_KEYS.appState,
   plan: STORAGE_KEYS.plan,
   pepRallies: STORAGE_KEYS.pepRallies,
+  skips: STORAGE_KEYS.skips,
+  skipMilestones: STORAGE_KEYS.skipMilestones,
 };
 const DATA_NAMES = Object.keys(DATA_KEYS) as DataName[];
 
@@ -131,6 +137,8 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       appState: sanitizeAppState(data.appState),
       plan: sanitizePlan(data.plan),
       pepRallies: sanitizePepLibrary(data.pepRallies),
+      skips: sanitizeSkips(data.skips),
+      skipMilestones: sanitizeSkipMilestones(data.skipMilestones),
     };
     for (const name of DATA_NAMES) {
       if (data[name] == null || isPreserved(data[name], restored[name])) continue;
@@ -157,6 +165,8 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       gameStats: restored.game as GameStats,
       plan: restored.plan as PlanRecord,
       pepRallies: restored.pepRallies as PepLibrary,
+      skips: restored.skips as SkipLog[],
+      skipMilestones: restored.skipMilestones as SkipMilestoneState,
       appState,
       schemaVersion: version,
       error: userDataUnreadable ? CORRUPT_DATA_MESSAGE : null,
@@ -170,6 +180,8 @@ export async function loadFrom(store: KeyValueStore, options: LoadOptions): Prom
       gameStats: { ...DEFAULT_GAME_STATS },
       plan: defaultPlan(),
       pepRallies: defaultPepLibrary(),
+      skips: [],
+      skipMilestones: defaultSkipMilestones(),
       appState: null,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       error: READ_ERROR_MESSAGE,

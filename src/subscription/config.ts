@@ -2,20 +2,28 @@ import { PlanId } from './entitlement';
 import { KeySource, StorePlatform } from './sdkKeys';
 
 /**
- * Turns Puphii Pro gating on. It only takes effect where Pro can actually be bought: see
- * `proGatingActive`. While the paywall is hidden, every feature stays available.
+ * When true, the app requires an active store entitlement (or trial) for normal use.
+ * Missing legal URLs must never unlock the app — only this kill switch disables enforcement.
  */
 export const SUBSCRIPTION_GATING_ENABLED = true;
 
 /**
- * Identifier of the RevenueCat entitlement that unlocks Puphii's premium experience. Shared by
- * every store, the Test Store included. Null would keep the SDK from starting.
+ * Identifier of the RevenueCat entitlement that unlocks Puphii. Shared by every store, the Test
+ * Store included. Null would keep the SDK from starting.
  */
 export const REVENUECAT_ENTITLEMENT_ID: string | null = 'puphii_pro';
 
 /**
- * Prices, currencies and the trial's length are set in App Store Connect and Google Play
+ * Prices, currencies and introductory-offer lengths are set in App Store Connect / Google Play
  * and must be shown from the store's product details, never from constants here.
+ *
+ * TARGET (manual ASC configuration — not proven live by this repo):
+ * - Annual $29.99 / year · 14-day free trial
+ * - Monthly $4.99 / month · 7-day free trial
+ * - Weekly $1.99 / week · 3-day free trial
+ *
+ * `hasFreeTrial` records that TARGET intent for harness alignment. The paywall never claims a
+ * trial from this flag alone — only from store intro + RevenueCat eligibility.
  */
 export type PlanConfig = {
   /**
@@ -27,13 +35,14 @@ export type PlanConfig = {
   packageId: string;
   /** ISO 8601 billing period, used to check the store's products match the plan. */
   billingPeriod: 'P1Y' | 'P1M' | 'P1W';
+  /** TARGET: this plan should carry a free introductory offer in App Store Connect. */
   hasFreeTrial: boolean;
 };
 
 export const PLANS: Record<PlanId, PlanConfig> = {
   annual: { productIds: { ios: 'puphii_annual_2999', android: null }, packageId: '$rc_annual', billingPeriod: 'P1Y', hasFreeTrial: true },
-  monthly: { productIds: { ios: 'puphii_monthly_499', android: null }, packageId: '$rc_monthly', billingPeriod: 'P1M', hasFreeTrial: false },
-  weekly: { productIds: { ios: 'puphii_weekly_199', android: null }, packageId: '$rc_weekly', billingPeriod: 'P1W', hasFreeTrial: false },
+  monthly: { productIds: { ios: 'puphii_monthly_499', android: null }, packageId: '$rc_monthly', billingPeriod: 'P1M', hasFreeTrial: true },
+  weekly: { productIds: { ios: 'puphii_weekly_199', android: null }, packageId: '$rc_weekly', billingPeriod: 'P1W', hasFreeTrial: true },
 };
 
 /**
@@ -44,26 +53,33 @@ export const PAYWALL_OFFERING_ID = 'default_v2';
 
 /**
  * Links the paywall must show. Null until the owner publishes the documents: never a placeholder
- * URL. Release builds hide the paywall until both are set (see `paywallConfigIssues`).
+ * URL. Missing links block purchases and are listed on the paywall; they never unlock the app.
  */
 export const LEGAL_URLS: { termsOfUse: string | null; privacyPolicy: string | null } = {
   termsOfUse: null,
   privacyPolicy: null,
 };
 
-/**
- * What each Puphii Pro feature is called on the paywall. Every key is an existing screen section
- * gated in the app (see `proFeatures.ts`): never list something the app doesn't gate.
- */
-export const PRO_FEATURE_BENEFITS = {
-  monthlyYearlyTrends: 'Monthly and yearly trends in your logged puffs',
-  pastPeriods: 'Look back at any past week, month or year',
-  extendedHistory: '30-day and all-time history charts',
-  spendingProjections: 'Monthly and yearly spending estimates, savings scenarios and goal timelines',
-} as const;
+/** Optional support contact. Shown on the paywall when set (https or mailto). */
+export const SUPPORT_URL: string | null = null;
 
-/** What Puphii Pro includes, one line each, as shown on the paywall. */
-export const PRO_BENEFITS: readonly string[] | null = Object.values(PRO_FEATURE_BENEFITS);
+/**
+ * Whole-app subscription benefits (not feature-by-feature Pro). Every line must stay accurate.
+ */
+export const APP_BENEFITS: readonly string[] = [
+  'Log puffs and skips with Puphii’s reactions and sounds',
+  'Insights, history, savings estimates, and your reduction plan',
+  'Bubble Break and all settings on this device',
+];
+
+/** @deprecated Prefer APP_BENEFITS — kept as alias for existing imports. */
+export const PRO_BENEFITS: readonly string[] | null = APP_BENEFITS;
+
+/**
+ * @deprecated Feature-tier labels are retired; subscription unlocks the whole app.
+ * Kept empty so old imports fail closed rather than advertising freemium.
+ */
+export const PRO_FEATURE_BENEFITS = {} as const;
 
 /** RevenueCat Test Store products. Never mixed into the App Store or Google Play IDs above. */
 export const TEST_STORE_PRODUCT_IDS: Record<PlanId, string> = { annual: 'yearly_2999', monthly: 'monthly_499', weekly: 'weekly_199' };

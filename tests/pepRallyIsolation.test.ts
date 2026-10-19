@@ -64,13 +64,27 @@ describe('Pep Rally isolation', () => {
     assert.ok(!/pepRally/i.test(body('commitLogs')));
   });
 
-  test('no screen, media API or permission is part of this phase', () => {
+  test('no screen, media API or permission is part of this phase; only PepRallyProvider reaches the controller', () => {
     const store = read('src', 'data', 'PuphiiStore.tsx');
     const contextType = store.slice(store.indexOf('type PuphiiStore = {'), store.indexOf('const StoreContext'));
-    assert.ok(!/pepRall|PepLibrary|PepRally/.test(contextType), 'nothing is exposed to screens yet');
-    for (const { name, text } of pepSources()) {
+    assert.ok(!/pepRall|PepLibrary|PepRally/.test(contextType), 'the store context exposes nothing about Pep Rallies');
+    const wiring = [
+      { name: 'pepRallyAccessBridge.ts', text: read('src', 'data', 'pepRallyAccessBridge.ts') },
+      { name: 'PepRallyProvider.tsx', text: read('src', 'data', 'PepRallyProvider.tsx') },
+    ];
+    for (const { name, text } of [...pepSources(), ...wiring]) {
       assert.ok(!/expo-audio|expo-file-system|expo-image-picker|AudioPlayer|AudioRecorder|setAudioModeAsync/.test(text), name);
     }
+    const uiFiles = (dir: string): string[] =>
+      readdirSync(join(root, dir), { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory() ? uiFiles(join(dir, entry.name)) : /\.tsx?$/.test(entry.name) ? [join(dir, entry.name)] : [],
+      );
+    for (const file of [...uiFiles(join('src', 'screens')), ...uiFiles(join('src', 'components')), 'App.tsx']) {
+      const text = read(file);
+      assert.ok(!/usePepRallies|useStorePepRallyController|pepRallyController|pepRallyAccessBridge/.test(text), `${file} has no Pep Rally UI yet`);
+    }
+    const controllerReaders = [...uiFiles(join('src', 'data')), ...uiFiles(join('src', 'subscription'))].filter((file) => /=\s*useStorePepRallyController\(\)/.test(read(file)));
+    assert.deepEqual(controllerReaders, [join('src', 'data', 'PepRallyProvider.tsx')]);
     const appJson = read('app.json');
     assert.match(appJson, /"microphonePermission": false/);
     assert.match(appJson, /"android\.permission\.RECORD_AUDIO"/);

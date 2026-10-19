@@ -10,6 +10,7 @@ import {
   clearHistoryMessage,
   fromTodayLine,
   homeTargetLine,
+  homeWeekLine,
   newMilestoneLine,
   nextChangeLine,
   PACE_DISCLAIMER,
@@ -27,6 +28,9 @@ import {
   spokenPlanDay,
   startingLevel,
   STATIC_PLAN_COPY,
+  TARGET_PAUSED_BADGE,
+  targetCardSpoken,
+  targetMarginLabel,
   todayNote,
   upcomingChangeLine,
   weekSummaryLine,
@@ -60,6 +64,18 @@ const BASELINE_SAMPLES: HistoryBaseline[] = [
   { status: 'notEnoughData', trackedDays: 1, needed: 3 },
 ];
 
+/** Every badge, week line and spoken summary Home's target card can show. */
+function targetCardLines(): string[] {
+  const pairs: [number, number][] = [[0, 10], [7, 10], [10, 10], [12, 10], [0, 0], [3, 0], [1, 1]];
+  return [
+    ...pairs.flatMap(([count, target]) => [targetMarginLabel(count, target), targetCardSpoken(count, target, targetMarginLabel(count, target))]),
+    targetCardSpoken(1, null, TARGET_PAUSED_BADGE),
+    homeWeekLine(1, 'reduce', false),
+    homeWeekLine(2, 'quit', false),
+    homeWeekLine(3, 'quit', true),
+  ];
+}
+
 function everyLine(): string[] {
   return [
     ...STATIC_PLAN_COPY,
@@ -76,6 +92,7 @@ function everyLine(): string[] {
     ...MILESTONE_IDS.map(newMilestoneLine),
     planWeekLine(3, false),
     planWeekLine(3, true),
+    ...targetCardLines(),
     nextChangeLine(12, 'Sunday, October 18, 2026'),
     settledLine('reduce'),
     settledLine('quit'),
@@ -116,7 +133,10 @@ describe('plan wording', () => {
   });
 
   test('targets are never framed as an amount to reach', () => {
-    const lines = PROGRESS_SAMPLES.flatMap((progress) => [homeTargetLine(progress), todayNote(progress)]).filter((line): line is string => !!line);
+    const lines = [
+      ...PROGRESS_SAMPLES.flatMap((progress) => [homeTargetLine(progress), todayNote(progress)]).filter((line): line is string => !!line),
+      ...targetCardLines(),
+    ];
     for (const line of lines) {
       assert.ok(!/to go|\bleft\b|remaining|\bmore\b|\bstill\b|\breach|\buntil\b|almost|nearly|\bonly\b/i.test(line), line);
     }

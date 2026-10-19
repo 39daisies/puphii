@@ -4,7 +4,7 @@ import { Entitlement, PlanId, RestoreResult, TrialEligibility } from './entitlem
 import { classifyError, entitlementFromCustomerInfo, ERROR_CODES, trialEligibilityFrom } from './revenueCat';
 
 /**
- * The Puphii Pro paywall's logic: which packages may be offered, how their store details are
+ * The subscription paywall's logic: which packages may be offered, how their store details are
  * described, and what purchase and restore attempts report. Access itself always comes from the
  * entitlement service, never from anything decided here.
  */
@@ -24,14 +24,14 @@ export type PaywallEntitlements = {
   restorePurchases(): Promise<RestoreResult>;
 };
 
-/** Display order. The first plan offered is selected by default. */
+/** Display order. Annual is preferred as the default selection when present. */
 export const PLAN_ORDER: readonly PlanId[] = ['annual', 'monthly', 'weekly'];
 
 /**
- * Plans the paywall never describes an introductory offer for. Their package is only offered when
- * the store reports none, since their wording would otherwise misstate what the store charges.
+ * Plans that must never advertise a free trial in the UI, even if the store product carries an
+ * intro. Empty: all three TARGET plans may offer trials; eligibility still comes from Apple/RC.
  */
-export const NO_INTRO_OFFER_PLANS: readonly PlanId[] = ['weekly'];
+export const NO_INTRO_OFFER_PLANS: readonly PlanId[] = [];
 
 /** A package whose product was checked against the configuration and may be offered. */
 export type VerifiedPlan = { plan: PlanId; pkg: PurchasesPackage };
@@ -42,8 +42,7 @@ export type OfferingResolution =
 
 /**
  * The offering's packages whose product is this store's configured product with the plan's
- * billing period. Anything else, including the other store's products, is never offered, and
- * neither is a `NO_INTRO_OFFER_PLANS` plan whose product carries an introductory offer.
+ * billing period. Anything else, including the other store's products, is never offered.
  */
 export function verifiedPlans(offering: PurchasesOffering, productIds: Record<PlanId, string | null>): VerifiedPlan[] {
   return PLAN_ORDER.flatMap((plan) => {
@@ -51,9 +50,14 @@ export function verifiedPlans(offering: PurchasesOffering, productIds: Record<Pl
     const pkg = offering.availablePackages.find((candidate) => candidate.identifier === PLANS[plan].packageId);
     if (!productId || !pkg) return [];
     if (pkg.product.identifier !== productId || pkg.product.subscriptionPeriod !== PLANS[plan].billingPeriod) return [];
-    if (NO_INTRO_OFFER_PLANS.includes(plan) && pkg.product.introPrice) return [];
     return [{ plan, pkg }];
   });
+}
+
+/** Prefer annual when available; otherwise the first verified plan. */
+export function defaultSelectedPlan(plans: readonly VerifiedPlan[]): PlanId | null {
+  if (!plans.length) return null;
+  return plans.find((p) => p.plan === 'annual')?.plan ?? plans[0].plan;
 }
 
 const ownOffering = (offerings: PurchasesOfferings, id: string) =>
@@ -136,8 +140,8 @@ export const storeNameFor = (platform: string) => (platform === 'ios' ? 'Apple' 
 
 /**
  * Everything shown for one plan, from the store's product details. The trial is only claimed when
- * the product has a free introductory offer and RevenueCat confirms the customer can still use it,
- * and never for a `NO_INTRO_OFFER_PLANS` plan.
+ * the product has a free introductory offer and RevenueCat confirms the customer can still use it.
+ * Never claim a trial from config alone, and never for `NO_INTRO_OFFER_PLANS`.
  */
 export function describePlan({ plan, pkg }: VerifiedPlan, trialEligibility: TrialEligibility, platform: string): PlanDisplay {
   const period = PERIOD[PLANS[plan].billingPeriod];
@@ -182,8 +186,8 @@ export function proStatusLabel(entitlement: Entitlement): string | undefined {
 export const hasProAccess = (entitlement: Entitlement): boolean => entitlement.status === 'active' || entitlement.status === 'gracePeriod';
 
 /**
- * What must be configured before the paywall may appear in a release build. Development builds
- * show the paywall regardless so it can be tested, and list these in the developer tools.
+ * What must be configured before a purchase may proceed. Missing legal links never unlock the app;
+ * they only block the purchase CTA until set.
  */
 export function paywallConfigIssues(
   links: { termsOfUse: string | null; privacyPolicy: string | null } = LEGAL_URLS,
@@ -193,13 +197,19 @@ export function paywallConfigIssues(
   const isLink = (url: string | null) => !!url && /^https:\/\/[^\s/]+\.[^\s/]+/.test(url);
   if (!isLink(links.termsOfUse)) issues.push('Terms of Use URL (LEGAL_URLS.termsOfUse in src/subscription/config.ts)');
   if (!isLink(links.privacyPolicy)) issues.push('Privacy Policy URL (LEGAL_URLS.privacyPolicy in src/subscription/config.ts)');
-  if (!benefits || !benefits.length || benefits.some((line) => !line.trim())) issues.push('Puphii Pro benefits (PRO_BENEFITS in src/subscription/config.ts)');
+  if (!benefits || !benefits.length || benefits.some((line) => !line.trim())) issues.push('Subscription benefits (APP_BENEFITS in src/subscription/config.ts)');
   return issues;
 }
 
-/** Whether the You screen offers Puphii Pro. Never forced open: this only controls the entry point. */
-export const showPaywallEntry = (isDevelopmentBuild: boolean, issues: string[] = paywallConfigIssues()) =>
-  isDevelopmentBuild || issues.length === 0;
+/** True when Terms and Privacy are configured so a purchase may be offered. */
+export const legalLinksReady = (issues: string[] = paywallConfigIssues()) =>
+  !issues.some((issue) => issue.includes('LEGAL_URLS'));
+
+/**
+ * Whether Settings may open the manage-subscription paywall while the user is already entitled.
+ * Always available when enforcement is on so Restore / legal stay reachable from inside the app.
+ */
+export const showPaywallEntry = (_isDevelopmentBuild?: boolean, _issues: string[] = paywallConfigIssues()) => true;
 
 export type PaywallNotice = { tone: 'success' | 'info' | 'error'; message: string };
 
@@ -297,6 +307,7 @@ export function createPaywallController({
   entitlementId,
   entitlements,
   platform,
+  legalLinks = LEGAL_URLS,
 }: {
   /** Null when this build has no native store module (Expo Go, web). */
   sdk: PaywallSdk | null;
@@ -305,6 +316,8 @@ export function createPaywallController({
   entitlementId: string | null;
   entitlements: PaywallEntitlements;
   platform: string;
+  /** Override for tests; production uses `LEGAL_URLS`. Missing links block purchase, never unlock. */
+  legalLinks?: { termsOfUse: string | null; privacyPolicy: string | null };
 }): PaywallController {
   let state: PaywallState = { phase: 'idle', busy: null, offeringId: null, plans: [], trial: {}, selected: null, unavailable: null, notice: null };
   const listeners = new Set<(state: PaywallState) => void>();
@@ -322,6 +335,7 @@ export function createPaywallController({
       const statuses = await sdk.checkTrialEligibility(withTrial.map(({ pkg }) => pkg.product.identifier));
       return Object.fromEntries(withTrial.map(({ plan, pkg }) => [plan, trialEligibilityFrom(statuses[pkg.product.identifier]?.status)]));
     } catch {
+      // Eligibility unknown ≠ ineligible: UI must not claim a trial until confirmed.
       return Object.fromEntries(withTrial.map(({ plan }) => [plan, 'unknown' as const]));
     }
   }
@@ -350,8 +364,8 @@ export function createPaywallController({
         const resolution = resolvePaywallOffering(await sdk.getOfferings(), productIds);
         if (!resolution.ok) return unavailable(UNAVAILABLE, resolution.detail);
         const trial = await trialEligibility(resolution.plans);
-        const selected = resolution.plans.some((p) => p.plan === state.selected) ? state.selected : resolution.plans[0].plan;
-        update({ phase: 'ready', offeringId: resolution.offeringId, plans: resolution.plans, trial, selected, unavailable: null });
+        const keep = state.selected && resolution.plans.some((p) => p.plan === state.selected) ? state.selected : defaultSelectedPlan(resolution.plans);
+        update({ phase: 'ready', offeringId: resolution.offeringId, plans: resolution.plans, trial, selected: keep, unavailable: null });
       } catch (error) {
         const problem = classifyError(error);
         unavailable(problem.kind === 'network' ? "Couldn't load subscription options. Check your connection and try again." : UNAVAILABLE, problem.message);
@@ -367,6 +381,15 @@ export function createPaywallController({
       if (state.busy) return 'busy';
       const chosen = state.phase === 'ready' ? state.plans.find((p) => p.plan === state.selected) : undefined;
       if (!sdk || !entitlementId || !chosen) return 'notReady';
+      if (!legalLinksReady(paywallConfigIssues(legalLinks))) {
+        update({
+          notice: {
+            tone: 'error',
+            message: 'Subscriptions aren’t available until Privacy Policy and Terms of Use links are configured. You can still Restore Purchases.',
+          },
+        });
+        return 'notReady';
+      }
       update({ busy: 'purchasing', notice: null });
       try {
         let result: MakePurchaseResult | null = null;

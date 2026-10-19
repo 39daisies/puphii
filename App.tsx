@@ -1,25 +1,24 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BackHandler, Image, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Image, Modal, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
-import { ProEntryProvider } from './src/components/ProGate';
+import { SubscriptionCheckingScreen } from './src/components/SubscriptionGate';
 import { TabBar, TabKey } from './src/components/TabBar';
+import { PepRallyProvider } from './src/data/PepRallyProvider';
 import { PuphiiProvider } from './src/data/PuphiiStore';
 import { useAppSession } from './src/hooks/useAppSession';
 import { FACES } from './src/mascot/faces';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { INITIAL_INSIGHTS_STATE, InsightsScreen, InsightsState } from './src/screens/InsightsScreen';
-import { PaywallScreen } from './src/screens/PaywallScreen';
+import { PaywallGate, PaywallScreen } from './src/screens/PaywallScreen';
 import { PlayScreen, usePlaySessions } from './src/screens/PlayScreen';
 import { SettingsScreen, YouPage, YouStartPage } from './src/screens/SettingsScreen';
-import { EntitlementProvider } from './src/subscription/EntitlementProvider';
-import { showPaywallEntry } from './src/subscription/paywall';
+import { EntitlementProvider, PRO_GATING_ACTIVE, useEntitlement } from './src/subscription/EntitlementProvider';
 import { colors, fontAssets } from './src/theme';
 
 type DevToolsModule = { TestStoreHarnessHost: React.ComponentType; TestStoreHarnessButton: React.ComponentType };
 // Development-only tools. Metro drops this require from production bundles, where __DEV__ is false.
 const DevTools: DevToolsModule | null = __DEV__ ? require('./src/dev/TestStoreHarness') : null;
-const PRO_ENTRY = showPaywallEntry(__DEV__);
 
 export default function App() {
   const [fontsLoaded, fontError] = useFonts(fontAssets);
@@ -38,12 +37,50 @@ export default function App() {
       ) : (
         <PuphiiProvider>
           <EntitlementProvider>
-            <AppShell />
-            {DevTools ? <DevTools.TestStoreHarnessHost /> : null}
+            <PepRallyProvider>
+              <AccessRoot />
+              {DevTools ? <DevTools.TestStoreHarnessHost /> : null}
+            </PepRallyProvider>
           </EntitlementProvider>
         </PuphiiProvider>
       )}
     </SafeAreaProvider>
+  );
+}
+
+/** Resolves subscription before the tab shell. Missing legal URLs never unlock. */
+function AccessRoot() {
+  const { access } = useEntitlement();
+  const [lockedDataOpen, setLockedDataOpen] = useState(false);
+
+  if (!PRO_GATING_ACTIVE) {
+    return <AppShell />;
+  }
+
+  if (access.pro === 'checking') {
+    return <SubscriptionCheckingScreen />;
+  }
+
+  if (access.pro === 'denied') {
+    if (lockedDataOpen) {
+      return (
+        <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setLockedDataOpen(false)}>
+          <LockedDataSheet onClose={() => setLockedDataOpen(false)} />
+        </Modal>
+      );
+    }
+    return <PaywallGate onOpenData={() => setLockedDataOpen(true)} />;
+  }
+
+  return <AppShell />;
+}
+
+/** Data management for locked users — does not unlock the rest of the app. */
+function LockedDataSheet({ onClose }: { onClose: () => void }) {
+  return (
+    <YouStartPage.Provider value="main">
+      <SettingsScreen lockedToData onLockedBack={onClose} />
+    </YouStartPage.Provider>
   );
 }
 
@@ -57,7 +94,7 @@ function AppShell() {
     setTab('you');
   }, []);
   const [paywallOpen, setPaywallOpen] = useState(false);
-  const openPro = useCallback(() => setPaywallOpen(true), []);
+  const openManageSubscription = useCallback(() => setPaywallOpen(true), []);
   // Held here so Pause survives tab changes; deliberately not saved between launches.
   const [reefPaused, setReefPaused] = useState(false);
   const toggleReef = useCallback(() => setReefPaused((paused) => !paused), []);
@@ -98,23 +135,19 @@ function AppShell() {
             onHideInvite={hideInvite}
           />
         )}
-        {tab === 'insights' && (
-          <ProEntryProvider value={PRO_ENTRY ? openPro : undefined}>
-            <InsightsScreen state={insights} onChange={updateInsights} />
-          </ProEntryProvider>
-        )}
+        {tab === 'insights' && <InsightsScreen state={insights} onChange={updateInsights} />}
         {tab === 'play' && <PlayScreen sessions={playSessions} />}
         {tab === 'you' && (
           <YouStartPage.Provider value={youPage}>
             <SettingsScreen
               footer={DevTools ? <DevTools.TestStoreHarnessButton /> : undefined}
-              onOpenPro={PRO_ENTRY ? openPro : undefined}
+              onOpenPro={openManageSubscription}
             />
           </YouStartPage.Provider>
         )}
       </View>
       <TabBar active={tab} onChange={setTab} />
-      {PRO_ENTRY ? <PaywallScreen visible={paywallOpen} onClose={() => setPaywallOpen(false)} /> : null}
+      <PaywallScreen visible={paywallOpen} onClose={() => setPaywallOpen(false)} />
     </View>
   );
 }

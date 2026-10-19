@@ -7,24 +7,29 @@ import { IconButton, SecondaryButton } from '../components/Buttons';
 import { Card } from '../components/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon } from '../components/Icon';
-import { ProGate } from '../components/ProGate';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { addLocalDays, dailySeries, DayGroup, groupLogsByDay, localDayKey, weeklySeries } from '../data/puffLogic';
 import { usePuphii } from '../data/PuphiiStore';
-import { PuffLog } from '../data/types';
+import { groupSkipsByDay, SkipDayGroup } from '../data/skips';
+import { PuffLog, TimedEvent } from '../data/types';
 import { useToday } from '../hooks/useToday';
 import { FACES } from '../mascot/faces';
-import { historyFeature } from '../subscription/proFeatures';
 import { colors, MAX_CONTENT_WIDTH, radii, spacing } from '../theme';
 import { formatFullDay, formatLongDate, formatShortDate, formatTime, formatWeekday, pluralize } from '../utils/format';
 
 export type HistoryRange = 'week' | 'month' | 'all';
+export type HistoryEventKind = 'puffs' | 'skips';
 
 const RANGE_OPTIONS = [
   { value: 'week', label: 'Week' },
   { value: 'month', label: 'Month' },
   { value: 'all', label: 'All' },
+] as const;
+
+const EVENT_OPTIONS = [
+  { value: 'puffs', label: 'Puffs' },
+  { value: 'skips', label: 'Skips' },
 ] as const;
 
 const DAYS_PAGE = 7;
@@ -33,26 +38,36 @@ const ROWS_PER_DAY = 5;
 type Props = {
   header?: React.ReactNode;
   range: HistoryRange;
+  eventKind: HistoryEventKind;
   onRangeChange: (range: HistoryRange) => void;
+  onEventKindChange: (kind: HistoryEventKind) => void;
 };
 
-export function HistoryScreen({ header, range, onRangeChange }: Props) {
-  const { logs, deleteLog } = usePuphii();
+export function HistoryScreen({ header, range, eventKind, onRangeChange, onEventKindChange }: Props) {
+  const { logs, skips, deleteLog } = usePuphii();
   const today = useToday();
   const insets = useSafeAreaInsets();
   const [visibleDays, setVisibleDays] = useState(DAYS_PAGE);
   const [pendingDelete, setPendingDelete] = useState<PuffLog | null>(null);
 
+  const isSkip = eventKind === 'skips';
+  const events: readonly TimedEvent[] = isSkip ? skips : logs;
+  const tone = isSkip ? 'mint' : 'coral';
+  const noun = isSkip ? 'skip' : 'puff';
+  const nounPlural = isSkip ? 'skips' : 'puffs';
+
   const todayKey = localDayKey(today);
   const yesterdayKey = localDayKey(addLocalDays(today, -1));
-  const groups = useMemo(() => groupLogsByDay(logs), [logs]);
+  const puffGroups = useMemo(() => groupLogsByDay(logs), [logs]);
+  const skipGroups = useMemo(() => groupSkipsByDay(skips), [skips]);
 
   const { bars, chartTitle, stats, dense } = useMemo(() => {
     const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
     const avg = (total: number, days: number) => (days ? (total / days).toFixed(1) : '0');
+    const groupCount = isSkip ? skipGroups.length : puffGroups.length;
 
     if (range === 'week') {
-      const days = dailySeries(logs, today, 7);
+      const days = dailySeries(events, today, 7);
       const total = sum(days.map((d) => d.count));
       return {
         chartTitle: 'Last 7 days',
@@ -64,6 +79,8 @@ export function HistoryScreen({ header, range, onRangeChange }: Props) {
           sublabel: String(d.date.getDate()),
           highlight: d.key === todayKey,
           spokenLabel: d.key === todayKey ? 'Today' : formatFullDay(d.date),
+          spokenValue: pluralize(d.count, `logged ${noun}`),
+          tone,
         })),
         stats: [
           { label: 'Today', value: String(days[days.length - 1].count) },
@@ -73,7 +90,7 @@ export function HistoryScreen({ header, range, onRangeChange }: Props) {
       };
     }
     if (range === 'month') {
-      const days = dailySeries(logs, today, 30);
+      const days = dailySeries(events, today, 30);
       const total = sum(days.map((d) => d.count));
       return {
         chartTitle: 'Last 30 days',
@@ -84,6 +101,8 @@ export function HistoryScreen({ header, range, onRangeChange }: Props) {
           label: index % 7 === 1 || d.key === todayKey ? formatShortDate(d.date) : '',
           highlight: d.key === todayKey,
           spokenLabel: d.key === todayKey ? 'Today' : formatFullDay(d.date),
+          spokenValue: pluralize(d.count, `logged ${noun}`),
+          tone,
         })),
         stats: [
           { label: 'Today', value: String(days[days.length - 1].count) },
@@ -92,7 +111,7 @@ export function HistoryScreen({ header, range, onRangeChange }: Props) {
         ],
       };
     }
-    const weeks = weeklySeries(logs, today, 8);
+    const weeks = weeklySeries(events, today, 8);
     return {
       chartTitle: 'Weekly totals',
       dense: false,
@@ -102,54 +121,83 @@ export function HistoryScreen({ header, range, onRangeChange }: Props) {
         label: formatShortDate(w.start),
         highlight: index === weeks.length - 1,
         spokenLabel: index === weeks.length - 1 ? 'This week' : `Week of ${formatLongDate(w.start)}`,
+        spokenValue: pluralize(w.count, `logged ${noun}`),
+        tone,
       })),
       stats: [
-        { label: 'All puffs', value: String(logs.length) },
-        { label: 'Days logged', value: String(groups.length) },
-        { label: 'Avg / day', value: avg(logs.length, groups.length) },
+        { label: `All ${nounPlural}`, value: String(events.length) },
+        { label: 'Days logged', value: String(groupCount) },
+        { label: 'Avg / day', value: avg(events.length, groupCount) },
       ],
     };
-  }, [range, logs, today, todayKey, groups.length]);
+  }, [range, events, today, todayKey, isSkip, skipGroups.length, puffGroups.length, noun, nounPlural, tone]);
 
-  const todayGroup: DayGroup = groups.find((g) => g.key === todayKey) ?? { key: todayKey, date: today, logs: [] };
-  const earlierGroups = groups.filter((g) => g.key !== todayKey);
-  const shownEarlier = earlierGroups.slice(0, visibleDays);
+  const todayPuffGroup: DayGroup = puffGroups.find((g) => g.key === todayKey) ?? { key: todayKey, date: today, logs: [] };
+  const todaySkipGroup: SkipDayGroup = skipGroups.find((g) => g.key === todayKey) ?? { key: todayKey, date: today, skips: [] };
+  const earlierPuffs = puffGroups.filter((g) => g.key !== todayKey);
+  const earlierSkips = skipGroups.filter((g) => g.key !== todayKey);
+  const shownEarlierPuffs = earlierPuffs.slice(0, visibleDays);
+  const shownEarlierSkips = earlierSkips.slice(0, visibleDays);
+  const earlierCount = isSkip ? earlierSkips.length : earlierPuffs.length;
+  const emptyAll = events.length === 0;
 
   return (
     <View style={styles.root}>
       <ScrollView contentContainerStyle={[styles.content, { paddingTop: insets.top }]} showsVerticalScrollIndicator={false}>
         {header ?? <ScreenHeader title="History" />}
-        <SegmentedControl options={RANGE_OPTIONS} value={range} onChange={onRangeChange} />
+        <SegmentedControl options={EVENT_OPTIONS} value={eventKind} onChange={onEventKindChange} />
+        <View style={styles.rangeControl}>
+          <SegmentedControl options={RANGE_OPTIONS} value={range} onChange={onRangeChange} />
+        </View>
 
-        <ProGate feature={historyFeature(range)} onNotNow={() => onRangeChange('week')}>
-          <Card style={styles.chartCard}>
-            <AppText variant="cardTitle">{chartTitle}</AppText>
-            <View style={styles.chart}>
-              <BarChart data={bars} showValues={!dense} dense={dense} height={dense ? 110 : 120} />
-            </View>
-            <View style={styles.stats}>
-              {stats.map((stat) => (
-                <View key={stat.label} style={styles.stat} accessible accessibilityLabel={`${stat.label}: ${stat.value}`}>
-                  <AppText variant="statValue">{stat.value}</AppText>
-                  <AppText variant="caption">{stat.label}</AppText>
-                </View>
-              ))}
-            </View>
-          </Card>
-        </ProGate>
+        <Card style={[styles.chartCard, isSkip && styles.skipCard]}>
+          <AppText variant="cardTitle">{chartTitle}</AppText>
+          <View style={styles.chart}>
+            <BarChart
+              data={bars}
+              tone={tone}
+              showValues={!dense}
+              dense={dense}
+              height={dense ? 110 : 120}
+              accessibilityTitle={`Logged ${nounPlural}`}
+            />
+          </View>
+          <View style={styles.stats}>
+            {stats.map((stat) => (
+              <View key={stat.label} style={styles.stat} accessible accessibilityLabel={`${stat.label}: ${stat.value}`}>
+                <AppText variant="statValue">{stat.value}</AppText>
+                <AppText variant="caption">{stat.label}</AppText>
+              </View>
+            ))}
+          </View>
+        </Card>
 
-        <DaySection group={todayGroup} title="Today" onDelete={setPendingDelete} emptyText="No puffs logged today." />
+        {isSkip ? (
+          <>
+            <SkipDaySection group={todaySkipGroup} title="Today" emptyText="No skips logged today." />
+            {shownEarlierSkips.map((group) => (
+              <SkipDaySection
+                key={group.key}
+                group={group}
+                title={group.key === yesterdayKey ? 'Yesterday' : formatWeekday(group.date)}
+              />
+            ))}
+          </>
+        ) : (
+          <>
+            <PuffDaySection group={todayPuffGroup} title="Today" onDelete={setPendingDelete} emptyText="No puffs logged today." />
+            {shownEarlierPuffs.map((group) => (
+              <PuffDaySection
+                key={group.key}
+                group={group}
+                title={group.key === yesterdayKey ? 'Yesterday' : formatWeekday(group.date)}
+                onDelete={setPendingDelete}
+              />
+            ))}
+          </>
+        )}
 
-        {shownEarlier.map((group) => (
-          <DaySection
-            key={group.key}
-            group={group}
-            title={group.key === yesterdayKey ? 'Yesterday' : formatWeekday(group.date)}
-            onDelete={setPendingDelete}
-          />
-        ))}
-
-        {earlierGroups.length > visibleDays ? (
+        {earlierCount > visibleDays ? (
           <SecondaryButton
             label="Show earlier days"
             onPress={() => setVisibleDays((count) => count + DAYS_PAGE)}
@@ -157,11 +205,13 @@ export function HistoryScreen({ header, range, onRangeChange }: Props) {
           />
         ) : null}
 
-        {logs.length === 0 ? (
+        {emptyAll ? (
           <View style={styles.empty}>
             <Image source={FACES.happy} style={styles.emptyMascot} resizeMode="contain" />
             <AppText variant="body" align="center">
-              Your history will appear here after you log your first puff.
+              {isSkip
+                ? 'Your skip history will appear here after you log your first skip.'
+                : 'Your history will appear here after you log your first puff.'}
             </AppText>
           </View>
         ) : null}
@@ -186,7 +236,7 @@ export function HistoryScreen({ header, range, onRangeChange }: Props) {
   );
 }
 
-function DaySection({
+function PuffDaySection({
   group,
   title,
   onDelete,
@@ -231,6 +281,9 @@ function DaySection({
               <AppText variant="time" style={styles.time}>
                 {formatTime(log.timestamp)}
               </AppText>
+              <AppText variant="caption" color={colors.textMuted} style={styles.meta}>
+                {productLabel(log)}
+              </AppText>
               <Image source={FACES.idle} style={styles.rowMascot} resizeMode="contain" accessible={false} />
               <View style={styles.flex} />
               <IconButton
@@ -262,6 +315,74 @@ function DaySection({
   );
 }
 
+function SkipDaySection({ group, title, emptyText }: { group: SkipDayGroup; title: string; emptyText?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? group.skips : group.skips.slice(0, ROWS_PER_DAY);
+  const hidden = group.skips.length - visible.length;
+
+  return (
+    <View style={styles.daySection}>
+      <View style={styles.dayHeader}>
+        <AppText variant="sectionTitle" accessibilityRole="header">
+          {title}
+        </AppText>
+        <AppText variant="bodySmall" style={styles.dayDate}>
+          {formatLongDate(group.date)}
+        </AppText>
+        <View style={[styles.pill, styles.skipPill]}>
+          <AppText variant="caption" color={colors.textPrimaryStrong}>
+            {pluralize(group.skips.length, 'skip')}
+          </AppText>
+        </View>
+      </View>
+      <Card style={[styles.logCard, styles.skipCard]}>
+        {group.skips.length === 0 ? (
+          <AppText variant="bodySmall" style={styles.emptyRow}>
+            {emptyText}
+          </AppText>
+        ) : (
+          visible.map((skip, index) => (
+            <View
+              key={skip.id}
+              style={[styles.logRow, (index < visible.length - 1 || hidden > 0 || expanded) && styles.logDivider]}
+              accessible
+              accessibilityLabel={`Skip logged at ${formatTime(skip.timestamp)}`}
+            >
+              <AppText variant="time" style={styles.time}>
+                {formatTime(skip.timestamp)}
+              </AppText>
+              <AppText variant="caption" color={colors.textMuted}>
+                Skip
+              </AppText>
+              <Image source={FACES.happy} style={styles.rowMascot} resizeMode="contain" accessible={false} />
+            </View>
+          ))
+        )}
+        {hidden > 0 || (expanded && group.skips.length > ROWS_PER_DAY) ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setExpanded((value) => !value)}
+            style={({ pressed }) => [styles.showAll, pressed && { opacity: 0.6 }]}
+          >
+            <AppText variant="label" color={colors.deepOcean}>
+              {expanded ? 'Show less' : `Show all ${group.skips.length}`}
+            </AppText>
+            <View style={{ transform: [{ rotate: expanded ? '180deg' : '0deg' }] }}>
+              <Icon name="chevronDown" size={18} color={colors.deepOcean} />
+            </View>
+          </Pressable>
+        ) : null}
+      </Card>
+    </View>
+  );
+}
+
+function productLabel(log: PuffLog): string {
+  if (log.product === 'vape') return 'Vape puff';
+  if (log.product === 'cigarette') return 'Cigarette';
+  return 'Puff';
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.skyBlue },
   content: {
@@ -271,7 +392,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.xxxl,
   },
+  rangeControl: { marginTop: spacing.md },
   chartCard: { marginTop: spacing.lg, paddingTop: spacing.lg },
+  skipCard: { borderColor: colors.seafoam },
   chart: { marginTop: spacing.md },
   stats: {
     flexDirection: 'row',
@@ -292,10 +415,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.coralPink,
   },
+  skipPill: {
+    backgroundColor: 'rgba(168, 220, 204, 0.45)',
+    borderColor: colors.seafoam,
+  },
   logCard: { paddingVertical: spacing.xs },
   logRow: { flexDirection: 'row', alignItems: 'center', minHeight: 52, gap: spacing.md },
   logDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   time: { minWidth: 76, fontVariant: ['tabular-nums'] },
+  meta: { minWidth: 72 },
   rowMascot: { width: 34, height: 34 },
   flex: { flex: 1 },
   emptyRow: { paddingVertical: spacing.md },

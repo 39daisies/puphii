@@ -1,29 +1,40 @@
-import { PRO_FEATURE_BENEFITS } from './config';
+import { SUBSCRIPTION_GATING_ENABLED } from './config';
 import type { ProAccess } from './entitlement';
 
 /**
- * The single place that decides what Puphii Pro covers. Logging, Undo, Pause, today's count, the
- * current week's overview, Bubble Break, settings, and viewing or deleting logs are never listed.
+ * Subscription-only access: there is no permanent free tier and no feature-by-feature Pro gate.
+ * When the kill switch is on, normal app use requires an active entitlement (or trial).
+ * Legal URL readiness never unlocks the app.
  */
-export type ProFeature = keyof typeof PRO_FEATURE_BENEFITS;
-
-export function overviewFeature(period: 'week' | 'month' | 'year', offset: number): ProFeature | null {
-  if (period !== 'week') return 'monthlyYearlyTrends';
-  return offset < 0 ? 'pastPeriods' : null;
-}
-
-/** Only the charts: the day-by-day log list, with delete, is someone's own data and stays free. */
-export const historyFeature = (range: 'week' | 'month' | 'all'): ProFeature | null => (range === 'week' ? null : 'extendedHistory');
-
-/** Per-month and per-year estimates, "If you used less" scenarios and the savings goal timeline. */
-export const SPENDING_PROJECTIONS: ProFeature = 'spendingProjections';
-
-export const canUse = (pro: ProAccess, feature: ProFeature | null): boolean => feature === null || pro === 'granted';
+export const subscriptionEnforced = (enabled: boolean = SUBSCRIPTION_GATING_ENABLED): boolean => enabled;
 
 /**
- * Gating only applies where Pro can be bought: the paywall entry is shown (legal links and
- * benefits configured, or a development build) and the store SDK can start. Elsewhere nothing
- * is locked, so release builds stay fully free until monetization is ready.
+ * @deprecated Alias of `subscriptionEnforced` kept for existing call sites and tests.
+ * Previously also required paywall legal URLs + store readiness — that incorrectly unlocked release builds.
  */
-export const proGatingActive = ({ enabled, paywallAvailable, storeReady }: { enabled: boolean; paywallAvailable: boolean; storeReady: boolean }) =>
-  enabled && paywallAvailable && storeReady;
+export const proGatingActive = ({
+  enabled,
+}: {
+  enabled: boolean;
+  /** Ignored: missing legal URLs must not unlock. */
+  paywallAvailable?: boolean;
+  /** Ignored: store unreadiness is `checking`, not free access. */
+  storeReady?: boolean;
+}): boolean => subscriptionEnforced(enabled);
+
+/**
+ * @deprecated Freemium feature keys removed. Always null — screens no longer gate sections.
+ */
+export type ProFeature = string;
+
+export function overviewFeature(_period: 'week' | 'month' | 'year', _offset: number): ProFeature | null {
+  return null;
+}
+
+export const historyFeature = (_range: 'week' | 'month' | 'all'): ProFeature | null => null;
+
+export const SPENDING_PROJECTIONS: ProFeature | null = null;
+
+/** With subscription-only access, any null feature is unrestricted once the user is in the app. */
+export const canUse = (pro: ProAccess, feature: ProFeature | null): boolean =>
+  feature === null || pro === 'granted';

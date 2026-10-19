@@ -357,7 +357,7 @@ describe('Clear and Reset wording', () => {
     assert.match(message, /Your plan settings stay/);
     assert.match(message, /milestones and the days you confirmed as puff-free are cleared/);
     assert.match(message, /can no longer be checked against your logs/);
-    assert.match(message, /Settings, savings calculator details and Bubble Break scores stay as they are\./);
+    assert.match(message, /Settings, skips, savings calculator details and Bubble Break scores stay as they are\./);
     assert.match(clearHistoryMessage(1), /^Your 1 logged puff will be/);
   });
 
@@ -372,7 +372,7 @@ describe('Clear and Reset wording', () => {
     assert.match(settings, /message=\{clearHistoryMessage\(logs\.length\)\}/);
     assert.match(settings, /message=\{RESET_EVERYTHING_MESSAGE\}/);
     assert.match(settings, /clearLogs\(\);\s*setConfirm\(null\);/);
-    assert.match(settings, /resetAll\(\);\s*void cancelDailyReminder\(\);/);
+    assert.match(settings, /resetRunner\.run\(resetAll, cancelDailyReminder\)/);
     assert.match(settings, /Your puff logs, plan, settings/);
   });
 });
@@ -390,8 +390,8 @@ describe('Your Plan screens', () => {
     assert.match(settings, /label=\{YOUR_PLAN_ROW\} detail=\{PLAN_STATUS_LABEL\[planStatus\(plan\)\]\} onPress=\{\(\) => onNavigate\('plan'\)\}/);
     assert.ok(settings.indexOf('title={PLAN_SECTION_TITLE}') > 0);
     assert.ok(settings.indexOf('title={PLAN_SECTION_TITLE}') < settings.indexOf('title="Reaction Mode"'));
-    assert.match(settings, /\{page === 'plan' && <PlanPage onBack=\{back\} onScrollTop=\{scrollTop\} \/>\}/);
-    assert.ok(settings.includes('{onOpenPro ? <NavRow icon="heart" label="Puphii Pro" detail={proStatusLabel(entitlement)} onPress={onOpenPro} /> : null}'));
+    assert.match(settings, /page === 'plan' && !lockedToData \? <PlanPage onBack=\{back\} onScrollTop=\{scrollTop\} \/> : null/);
+    assert.match(settings, /label="Subscription"/);
     assert.deepEqual(Object.values(PLAN_STATUS_LABEL), ['Tracking only', 'Cutting down', 'Toward quitting', 'Paused']);
   });
 
@@ -423,7 +423,8 @@ describe('Your Plan screens', () => {
   test('other charts are left as they were (Home adds targets only with a plan; see homePlan tests)', () => {
     for (const file of ['HistoryScreen.tsx', 'InsightsOverview.tsx']) {
       const text = source('screens', file);
-      assert.ok(!/accessibilityTitle|untracked|target:/.test(text), file);
+      // Spoken chart titles are fine; plan-style untracked/target overlays stay off these screens.
+      assert.ok(!/\buntracked\b|target:/.test(text), file);
     }
     assert.match(source('components', 'BarChart.tsx'), /accessibilityTitle = 'Logged puffs'/);
   });

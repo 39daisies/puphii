@@ -175,10 +175,10 @@ export const YOUR_PLAN_CAPTION = 'A daily target at your own pace, or just track
 export const clearHistoryMessage = (logCount: number): string =>
   `${logCount === 1 ? 'Your 1 logged puff' : `All ${logCount} logged puffs`} will be permanently deleted from this device. ` +
   'Your plan settings stay, but its milestones and the days you confirmed as puff-free are cleared, and a starting level calculated from your history can no longer be checked against your logs. ' +
-  'Settings, savings calculator details and Bubble Break scores stay as they are.';
+  'Settings, skips, savings calculator details and Bubble Break scores stay as they are.';
 
 export const RESET_EVERYTHING_MESSAGE =
-  'All puff logs, your plan and its milestones, savings calculator details and Bubble Break scores are deleted. Settings return to their defaults, reminders are turned off and Puphii goes back to tracking only. ' +
+  'All puff logs and skips, your plan and its milestones, savings calculator details and Bubble Break scores are deleted. Settings return to their defaults, reminders are turned off and Puphii goes back to tracking only. ' +
   'Puphii keeps only the date it was first opened on this device and its data format version, neither of which includes puff data.';
 
 /** Home's one-line summary: what was logged, next to the target. Never a "remaining" amount. */
@@ -187,6 +187,23 @@ export function homeTargetLine(progress: TodayProgress): string | null {
   if (progress.kind === 'paused') return `${progress.count} logged · Plan paused`;
   return `${progress.count} logged · Daily target ${progress.target}`;
 }
+
+/** Home's target card badge: how far today's count is from the target, never an amount to use up. */
+export function targetMarginLabel(count: number, target: number): string {
+  if (count === target) return 'At target';
+  return count < target ? `${target - count} below target` : `${count - target} above target`;
+}
+
+export const TARGET_PAUSED_BADGE = 'Plan paused';
+
+export const puffUnit = (count: number): string => (count === 1 ? 'puff' : 'puffs');
+
+export const homeWeekLine = (week: number, goal: 'reduce' | 'quit', paused: boolean): string =>
+  paused ? planWeekLine(week, true) : `Week ${week} of your ${goal === 'quit' ? 'quit' : 'reduction'} plan`;
+
+/** The target card's count, target and badge as one spoken sentence. */
+export const targetCardSpoken = (count: number, target: number | null, badge: string): string =>
+  `${target === null ? puffs(count) : `${count} of ${target} ${puffUnit(target)}`} logged today. ${badge}.`;
 
 export function todayNote(progress: TodayProgress): string | null {
   if (progress.kind === 'noPlan') return null;
@@ -348,6 +365,7 @@ export const STATIC_PLAN_COPY: readonly string[] = [
   HOME_NEW_GOAL_DISMISS,
   HOME_TARGET_TITLE,
   OPEN_PLAN_HINT,
+  TARGET_PAUSED_BADGE,
   MILESTONE_NOTICE_LABEL,
   MILESTONE_NOTICE_DISMISS,
   MILESTONE_NOTICE_HINT,

@@ -1,10 +1,16 @@
 # Pep Rally orphaned media: requirements for a future recovery screen
 
-Status: requirements only. Nothing here is implemented in Phase V-A, and no screen exists yet.
+Status: requirements only. The recovery screen is not implemented and no screen exists yet. The data-layer guarantees below are implemented (Phase V-A, V-B S1 and S2).
+
+## Where the files are
+
+- **Saved media:** a folder named `pep-rallies/` in Puphii's private app storage. `attachMedia` refuses any folder inside `Documents`, `Library/Caches` or `tmp` (`isSavedMediaUri` in `src/pepRally/files.ts`): Documents is backed up, and the system may empty Caches and tmp. The planned location is `Library/Application Support/`, chosen by the media store in a later step; no media store is connected yet.
+- **Unsaved takes and imports:** a separate `pep-rally-staging/` folder.
+- **Backups:** each saved file must confirm by itself, through `excludeFromBackup`, that it is excluded from device backups before its save is finished. The folder's own setting doesn't count.
 
 ## What an orphan is
 
-An orphan is a file directly inside Puphii's media folder (`Documents/pep-rallies/`) whose name Puphii generated (`pr-<id>-a<rev>.<ext>` or `pr-<id>-p<rev>.<ext>`) but which no entry in the Pep Rally metadata (`@puphii/pep-rallies-v1`) lists.
+An orphan is a file directly inside Puphii's saved media folder (`pep-rallies/`) whose name Puphii generated (`pr-<id>-a<rev>.<ext>` or `pr-<id>-p<rev>.<ext>`) but which no entry in the Pep Rally metadata (`@puphii/pep-rallies-v1`) lists.
 
 Orphans can appear when:
 
@@ -14,13 +20,32 @@ Orphans can appear when:
 
 Files in the folder that Puphii did not name are not orphans and are never shown, restored or deleted.
 
-## What Phase V-A guarantees today
+## What is guaranteed today
 
 - Orphans are never deleted by launching, recovery, saving, replacing, deleting another recording or clearing puff history.
 - Orphans are never restored automatically.
-- Every recovery reports them in `health().unlisted`, so a future screen can find them without scanning on its own.
+- Every recovery reports them in `health().unlisted`, so a future screen can find them without scanning on its own, except while a reset is pending (below).
 - Only Reset everything, which the person confirms, deletes them, together with every other Pep Rally file.
 - The set-aside metadata copies stay in storage until Reset everything removes them.
+
+## Reset everything and the pending-reset marker
+
+- Reset everything first hides and erases every rally and saves a `pendingReset` timestamp in the same library write, before any file is touched.
+- Then it deletes every listed and unlisted Pep Rally file and every unsaved take, one file at a time through `deleteRecordingFiles`: never recursively, never outside the two folders, and the folders themselves are kept. Then it lists both folders again.
+- The marker is removed, and that saved, only once both folders hold no Pep Rally file except those of rallies saved since. It is never removed just to report success.
+- While the marker is present, launch recovery finishes the reset, and `health().unlisted` stays empty, so nothing the reset covered is ever offered back as an orphan.
+- An unreadable marker is repaired, not dropped: it still means a reset is unfinished. (A carried-forward requirement remains: if the whole library entry is unreadable, the marker is lost with it, and leftover files would be reported as unlisted. Not fixed yet.)
+- Without a media store, nothing can be deleted or checked, so the marker stays and the reset is never reported as finished, even if the library was empty.
+
+What the Data page says (`src/data/resetOutcome.ts`):
+
+| Result of the Pep Rally reset | Message |
+|---|---|
+| Confirmed: metadata saved empty, both folders checked, marker removed | "Puphii has been reset." |
+| Files deleted, but named ones are left over (`filesRemain`); finished at the next launch | "Puphii has been reset, but some recordings couldn't be deleted yet. Puphii will try again the next time it opens." |
+| Storage unavailable, the save failed, no media store, a folder couldn't be read, or no result | "Puphii couldn't finish resetting. Your recordings may still be on this device." |
+
+Both incomplete messages offer **Try again**, which runs Reset everything again (safe to repeat). The Reset button shows "Resetting…" and is disabled while it runs. The daily reminder is cancelled every time, whatever the result.
 
 ## Requirements for the recovery screen
 

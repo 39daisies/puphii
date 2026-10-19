@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { inflateSync } from 'node:zlib';
@@ -375,14 +375,11 @@ describe('bundled reef assets', () => {
     });
   }
 
-  test('the smoky squint face is a transparent sprite on the reaction faces\' canvas', () => {
-    const box = opaqueBox('assets/puffy/smoky_squint.png');
-    assert.deepEqual([box.width, box.height], [idle.width, idle.height]);
-    assert.deepEqual(box.corners, [0, 0, 0, 0], 'the black background was removed');
-    assert.equal(box.edge, 0, 'the smoke is not clipped by the canvas edge');
-    const { alpha } = readAlpha('assets/puffy/smoky_squint.png');
-    assert.ok(alpha.some((a) => a > 16 && a < 200), 'the smoke stays translucent');
-    assert.match(read('src', 'mascot', 'faces.ts'), /smokySquint: require\('\.\.\/\.\.\/assets\/puffy\/smoky_squint\.png'\)/);
+  test('no reaction face shows Puphii holding a cigarette', () => {
+    const faces = read('src', 'mascot', 'faces.ts');
+    assert.ok(!/smoky|cigarette|smoky_squint/i.test(faces));
+    assert.equal(existsSync(join(ROOT, 'assets/puffy/smoky_squint.png')), false);
+    assert.equal(existsSync(join(ROOT, 'assets/icon.png')), false);
   });
 
   test('the app icon is a 1024 px opaque PNG set in app.json', () => {
@@ -437,13 +434,74 @@ describe('Home wiring', () => {
     assert.match(scene, /SWIM_SPRITES\.front/);
     assert.ok(!/FACES\.|REACTIONS/.test(scene), 'the scene never picks a reaction face itself');
     const faces = read('src', 'mascot', 'faces.ts');
-    assert.match(faces, /minimal: \{ faces: \['curious', 'winking'\], duration: 550 \}/);
-    assert.match(faces, /expressive: \{ faces: \['coughing', 'annoyed', 'exasperated', 'smokySquint'\], duration: 850 \}/);
-    assert.match(faces, /dramatic: \{ faces: \['furiousSteam', 'dizzy'\], duration: 1000 \}/);
+    assert.match(faces, /minimal: \{ faces: \['puffNervous', 'puffDreamy'\], duration: 550 \}/);
+    assert.match(
+      faces,
+      /expressive: \{\s*faces: \['puffSurprised', 'puffExhaling', 'puffStraining', 'puffDizzyBubbles', 'puffSad', 'puffSleeping'\],\s*duration: 850,?\s*\}/,
+    );
+    assert.match(
+      faces,
+      /dramatic: \{\s*faces: \['puffAngry', 'puffShouting', 'puffScared', 'puffCrying', 'puffExhaling'\],\s*duration: 1000,?\s*\}/,
+    );
+    const reactionsBlock = faces.slice(faces.indexOf('export const REACTIONS'), faces.indexOf('export const MODE_COPY'));
+    assert.ok(!/'happy'|'recovering'|skipProud|skipWink|smokySquint/.test(reactionsBlock), 'puff reactions exclude smiling and Skip faces');
+    for (const file of [
+      'assets/puffy/puff_surprised.png',
+      'assets/puffy/puff_exhaling.png',
+      'assets/puffy/puff_straining.png',
+      'assets/puffy/puff_dizzyBubbles.png',
+      'assets/puffy/puff_nervous.png',
+      'assets/puffy/puff_dreamy.png',
+      'assets/puffy/puff_angry.png',
+      'assets/puffy/puff_sleeping.png',
+      'assets/puffy/puff_sad.png',
+      'assets/puffy/puff_shouting.png',
+      'assets/puffy/puff_crying.png',
+      'assets/puffy/puff_scared.png',
+    ]) {
+      assert.equal(existsSync(join(ROOT, file)), true, file);
+      const box = opaqueBox(file);
+      assert.deepEqual(box.corners, [0, 0, 0, 0], `${file} transparent corners`);
+      assert.equal(box.edge, 0, `${file} not clipped by canvas edge`);
+    }
+    assert.match(faces, /export const SKIP_CHEER_FACES/);
+    const skipCheer = [
+      'skipProud',
+      'skipWink',
+      'skipWiggle',
+      'skipGrateful',
+      'skipVictory',
+      'skipRelief',
+      'skipStarry',
+      'skipDance',
+      'skipTears',
+      'skipChampion',
+    ];
+    for (const name of skipCheer) assert.match(faces, new RegExp(`'${name}'`));
+    for (const file of [
+      'assets/puffy/skip_proud.png',
+      'assets/puffy/skip_wink.png',
+      'assets/puffy/skip_wiggle.png',
+      'assets/puffy/skip_grateful.png',
+      'assets/puffy/skip_victory.png',
+      'assets/puffy/skip_relief.png',
+      'assets/puffy/skip_starry.png',
+      'assets/puffy/skip_dance.png',
+      'assets/puffy/skip_tears.png',
+      'assets/puffy/skip_champion.png',
+    ]) {
+      assert.equal(existsSync(join(ROOT, file)), true, file);
+      const box = opaqueBox(file);
+      assert.deepEqual(box.corners, [0, 0, 0, 0], `${file} transparent corners`);
+      assert.equal(box.edge, 0, `${file} not clipped by canvas edge`);
+    }
   });
 
   test('the scene is decorative to screen readers, apart from Puphii and the count', () => {
     assert.match(scene, /accessibilityElementsHidden\s+importantForAccessibility="no-hide-descendants"/);
-    assert.match(home, /accessibilityLabel=\{`Today's count: \$\{pluralize\(todayCount, 'puff'\)\}`\}/);
+    assert.match(
+      home,
+      /accessibilityLabel=\{\s*isPuff \? `Today's count: \$\{pluralize\(heroCount, 'puff'\)\}` : `Today's skips: \$\{pluralize\(heroCount, 'skip'\)\}`/,
+    );
   });
 });

@@ -5,16 +5,18 @@ import { AppText } from '../components/AppText';
 import { IconButton, PrimaryButton, SecondaryButton } from '../components/Buttons';
 import { Card } from '../components/Card';
 import { Icon } from '../components/Icon';
+import { LockedAccountLinks } from '../components/SubscriptionGate';
 import { OceanBackground } from '../components/OceanBackground';
 import { Wordmark } from '../components/Wordmark';
 import { FACES } from '../mascot/faces';
-import { LEGAL_URLS, PRO_BENEFITS, REVENUECAT_ENTITLEMENT_ID } from '../subscription/config';
+import { APP_BENEFITS, LEGAL_URLS, REVENUECAT_ENTITLEMENT_ID, SUPPORT_URL } from '../subscription/config';
 import { Entitlement, PlanId } from '../subscription/entitlement';
 import { useEntitlement } from '../subscription/EntitlementProvider';
 import {
   createPaywallController,
   describePlan,
   hasProAccess,
+  legalLinksReady,
   PaywallNotice,
   PaywallState,
   PlanDisplay,
@@ -27,16 +29,29 @@ import { formatLongDate } from '../utils/format';
 
 const STORE_NAME = storeNameFor(Platform.OS);
 
-/** Puphii Pro. Opened from the You screen; never shown on launch and never blocks the counter. */
+/** Manage / restore sheet for entitled users (or manual open). Close returns to the app. */
 export function PaywallScreen({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      {visible ? <PaywallContent onClose={onClose} /> : null}
+      {visible ? <PaywallContent mode="modal" onClose={onClose} /> : null}
     </Modal>
   );
 }
 
-function PaywallContent({ onClose }: { onClose: () => void }) {
+/** Full-screen lock for users without an active subscription. Cannot dismiss into the app. */
+export function PaywallGate({ onOpenData }: { onOpenData: () => void }) {
+  return <PaywallContent mode="gate" onOpenData={onOpenData} />;
+}
+
+function PaywallContent({
+  mode,
+  onClose,
+  onOpenData,
+}: {
+  mode: 'modal' | 'gate';
+  onClose?: () => void;
+  onOpenData?: () => void;
+}) {
   const { entitlement, refresh, restorePurchases } = useEntitlement();
   const controller = useMemo(
     () =>
@@ -57,38 +72,55 @@ function PaywallContent({ onClose }: { onClose: () => void }) {
     return unsubscribe;
   }, [controller]);
 
+  // After a successful purchase/restore, entitled users leave the gate automatically via AppShell.
+  useEffect(() => {
+    if (mode === 'modal' && hasProAccess(entitlement) && state.notice?.tone === 'success' && onClose) {
+      // Keep the success notice visible briefly inside the modal; caller may close.
+    }
+  }, [entitlement, mode, onClose, state.notice]);
+
   const plans: PlanDisplay[] = state.plans.map((verified) => describePlan(verified, state.trial[verified.plan] ?? 'unknown', Platform.OS));
   const selected = plans.find((plan) => plan.plan === state.selected) ?? null;
   const subscribed = hasProAccess(entitlement);
   const busy = state.busy !== null;
+  const canPurchase = legalLinksReady();
+  const expired =
+    entitlement.status === 'inactive' && (entitlement.reason === 'expired' || entitlement.reason === 'refunded' || entitlement.reason === 'revoked');
+
+  const openSupport = SUPPORT_URL
+    ? () => {
+        void Linking.openURL(SUPPORT_URL!).catch(() => undefined);
+      }
+    : undefined;
 
   return (
     <View style={styles.root}>
       <OceanBackground variant="reef" />
       <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-        <View style={styles.header}>
-          <IconButton icon="close" accessibilityLabel="Close Puphii Pro" onPress={onClose} />
-        </View>
+        {mode === 'modal' && onClose ? (
+          <View style={styles.header}>
+            <IconButton icon="close" accessibilityLabel="Close subscription" onPress={onClose} />
+          </View>
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.column}>
             <View style={styles.hero}>
               <Image source={FACES.happy} style={styles.mascot} resizeMode="contain" accessible={false} />
-              <View style={styles.brand} accessible accessibilityRole="header" accessibilityLabel="Puphii Pro">
+              <View style={styles.brand} accessible accessibilityRole="header" accessibilityLabel="Puphii">
                 <Wordmark size={40} />
-                <View style={styles.proPill}>
-                  <AppText variant="overline" color={colors.white} style={styles.proText}>
-                    PRO
-                  </AppText>
-                </View>
               </View>
               <AppText variant="body" align="center" style={styles.lede}>
-                Notice your smoking or vaping habits, and make changes on your own terms.
+                {expired
+                  ? 'Your subscription ended. Resubscribe to keep using Puphii. Your logs stay on this device.'
+                  : 'Subscribe to use Puphii — logging, insights, plans, and play. Your data stays on this device.'}
               </AppText>
             </View>
 
-            {PRO_BENEFITS?.length ? (
+            {APP_BENEFITS.length ? (
               <Card style={styles.benefits}>
-                {PRO_BENEFITS.map((benefit) => (
+                {APP_BENEFITS.map((benefit) => (
                   <View key={benefit} style={styles.benefitRow}>
                     <View style={styles.benefitIcon}>
                       <Icon name="check" size={16} color={colors.white} strokeWidth={2.6} />
@@ -136,13 +168,19 @@ function PaywallContent({ onClose }: { onClose: () => void }) {
 
             {state.notice ? <Notice notice={state.notice} onDismiss={controller.dismissNotice} /> : null}
 
+            {!canPurchase && !subscribed ? (
+              <AppText variant="caption" align="center" color={colors.coralInk}>
+                Purchase is unavailable until Privacy Policy and Terms of Use links are configured. Restore Purchases still works.
+              </AppText>
+            ) : null}
+
             {state.phase === 'ready' && !subscribed && selected ? (
               <View style={styles.cta}>
                 <PrimaryButton
                   label={state.busy === 'purchasing' ? 'Processing…' : selected.cta}
                   accessibilityLabel={state.busy === 'purchasing' ? 'Processing purchase' : selected.ctaAccessibilityLabel}
                   accessibilityHint={`Opens the ${STORE_NAME} purchase confirmation`}
-                  disabled={busy}
+                  disabled={busy || !canPurchase}
                   onPress={() => void controller.purchase()}
                 />
                 <AppText variant="caption" align="center" color={colors.textMutedStrong} style={styles.disclosure}>
@@ -173,6 +211,8 @@ function PaywallContent({ onClose }: { onClose: () => void }) {
               ) : null}
               <LegalLink label="Privacy Policy" url={LEGAL_URLS.privacyPolicy} />
             </View>
+
+            {mode === 'gate' && onOpenData ? <LockedAccountLinks onOpenData={onOpenData} onOpenSupport={openSupport} /> : null}
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -249,7 +289,7 @@ function ActiveCard({ entitlement }: { entitlement: Entitlement }) {
     <Card style={styles.active} accessibilityLiveRegion="polite">
       <Image source={FACES.winking} style={styles.activeMascot} resizeMode="contain" accessible={false} />
       <View style={styles.flex}>
-        <AppText variant="cardTitle">Puphii Pro is active</AppText>
+        <AppText variant="cardTitle">Your subscription is active</AppText>
         {detail ? <AppText variant="bodySmall">{detail}</AppText> : null}
         <AppText variant="caption">Manage or cancel it in your {storeAccountFor(Platform.OS)} settings.</AppText>
       </View>
@@ -302,6 +342,7 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   flex: { flex: 1 },
   header: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: spacing.md, paddingTop: spacing.xs },
+  headerSpacer: { height: spacing.md },
   content: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl, alignItems: 'center' },
   column: { width: '100%', maxWidth: MAX_CONTENT_WIDTH, gap: spacing.lg },
   hero: { alignItems: 'center', gap: spacing.xs },

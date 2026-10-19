@@ -38,7 +38,7 @@ type Mode = 'main' | 'pace' | 'revise';
  * Free for everyone; nothing here checks a subscription.
  */
 export function PlanPage({ onBack, onScrollTop }: { onBack: () => void; onScrollTop: () => void }) {
-  const { plan, logs, planActions } = usePuphii();
+  const { plan, logs, skips, planActions } = usePuphii();
   const today = localDayKey(useToday());
   const [mode, setMode] = useState<Mode>('main');
   const [notice, setNotice] = useState<string | null>(null);
@@ -135,6 +135,7 @@ export function PlanPage({ onBack, onScrollTop }: { onBack: () => void; onScroll
           plan={plan}
           segment={segment}
           logs={logs}
+          skips={skips}
           today={today}
           paused={paused}
           newMilestones={newMilestones}

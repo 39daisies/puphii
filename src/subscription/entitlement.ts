@@ -54,17 +54,24 @@ export type EntitlementStatus = Entitlement['status'];
 export const isAnnualTrialEligible = (entitlement: Entitlement): boolean =>
   entitlement.status === 'inactive' && entitlement.annualTrial === 'eligible';
 
-/** `checking` means "can't tell yet": show progress or a retry, never a paywall and never unlocked content. */
+/**
+ * App unlock status when subscription enforcement is on.
+ * `checking` means "can't tell yet": show progress or retry — never treat as expired, never unlock.
+ * `granted` is full app access. `denied` shows the paywall while keeping data management available.
+ */
 export type ProAccess = 'granted' | 'denied' | 'checking';
 
 /**
- * `pro` covers Puphii Pro features only: logging, Bubble Break and everything else stay free.
- * People can always see, delete and export their own data, whatever their subscription status.
+ * Subscription-only: `pro` unlocks the whole app (not a freemium feature set).
+ * `viewData` / `deleteData` / `exportData` stay true so locked users can still manage local records.
  */
 export type Access = { pro: ProAccess; viewData: true; deleteData: true; exportData: true };
 
 export type AccessOptions = {
-  /** False wherever Pro can't be bought, so nothing is locked there. */
+  /**
+   * When true, require an active store entitlement (or trial). When false (kill switch), unlock.
+   * Missing legal URLs must never flip this to unlocked — that is handled separately on the paywall.
+   */
   gatingEnabled: boolean;
   /** Mock entitlements only count in development builds and tests. */
   allowMock: boolean;
@@ -76,6 +83,7 @@ export function accessFor(entitlement: Entitlement, { gatingEnabled, allowMock }
   switch (entitlement.status) {
     case 'unknown':
     case 'error':
+      // Unavailable / offline / not configured ≠ expired. Do not unlock; do not show "resubscribe" as fact.
       return access('checking');
     case 'active':
     case 'gracePeriod':

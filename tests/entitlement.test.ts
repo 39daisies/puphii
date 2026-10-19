@@ -78,11 +78,11 @@ describe('subscription access', () => {
 });
 
 describe('subscription configuration', () => {
-  test('only the annual plan has a free trial, and no price or trial length is hardcoded', () => {
+  test('all three plans intend free trials; prices and lengths are not hardcoded in UI config', () => {
     assert.deepEqual(Object.keys(PLANS), ['annual', 'monthly', 'weekly']);
     assert.equal(PLANS.annual.hasFreeTrial, true);
-    assert.equal(PLANS.monthly.hasFreeTrial, false);
-    assert.equal(PLANS.weekly.hasFreeTrial, false);
+    assert.equal(PLANS.monthly.hasFreeTrial, true);
+    assert.equal(PLANS.weekly.hasFreeTrial, true);
     assert.equal(PLANS.annual.billingPeriod, 'P1Y');
     assert.equal(PLANS.monthly.billingPeriod, 'P1M');
     assert.equal(PLANS.weekly.billingPeriod, 'P1W');

@@ -1,26 +1,27 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { SUBSCRIPTION_GATING_ENABLED } from './config';
 import { Access, accessFor, Entitlement, RestoreResult } from './entitlement';
-import { showPaywallEntry } from './paywall';
-import { proGatingActive } from './proFeatures';
-import { appSdkKey, createAppEntitlementService, hasNativeStore } from './revenueCatSdk';
+import { subscriptionEnforced } from './proFeatures';
+import { createAppEntitlementService } from './revenueCatSdk';
 
-export const PRO_GATING_ACTIVE = proGatingActive({
-  enabled: SUBSCRIPTION_GATING_ENABLED,
-  paywallAvailable: showPaywallEntry(__DEV__),
-  storeReady: hasNativeStore && appSdkKey.ok,
-});
+/** True when the app requires an active subscription/trial for normal use. */
+export const PRO_GATING_ACTIVE = subscriptionEnforced(SUBSCRIPTION_GATING_ENABLED);
 
 type EntitlementContextValue = {
   entitlement: Entitlement;
   access: Access;
+  /**
+   * Access worked out from the subscription service at the moment it is called, never from a
+   * render, so code acting later can't use an older answer. Stable for the provider's lifetime.
+   */
+  currentAccess: () => Access;
   refresh: () => Promise<Entitlement>;
   restorePurchases: () => Promise<RestoreResult>;
 };
 
 const EntitlementContext = createContext<EntitlementContextValue | null>(null);
 
-/** Keeps subscription status current, and is the only place Puphii Pro access is worked out. */
+/** Keeps subscription status current, and is the only place app unlock is worked out. */
 export function EntitlementProvider({ children }: { children: React.ReactNode }) {
   const [service] = useState(createAppEntitlementService);
   const [entitlement, setEntitlement] = useState<Entitlement>(() => service.current());
@@ -40,14 +41,17 @@ export function EntitlementProvider({ children }: { children: React.ReactNode })
     if (__DEV__) console.log(`[Puphii] Subscription status: ${statusDetail}`);
   }, [statusDetail]);
 
+  const currentAccess = useCallback(() => accessFor(service.current(), { gatingEnabled: PRO_GATING_ACTIVE, allowMock: __DEV__ }), [service]);
+
   const value = useMemo<EntitlementContextValue>(
     () => ({
       entitlement,
       access: accessFor(entitlement, { gatingEnabled: PRO_GATING_ACTIVE, allowMock: __DEV__ }),
+      currentAccess,
       refresh: service.refresh,
       restorePurchases: service.restorePurchases,
     }),
-    [entitlement, service],
+    [entitlement, service, currentAccess],
   );
 
   return <EntitlementContext.Provider value={value}>{children}</EntitlementContext.Provider>;

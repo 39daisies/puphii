@@ -11,6 +11,10 @@ export const STORAGE_KEYS = {
   plan: '@puphii/plan-v1',
   /** Voice Pep Rally metadata; the media itself is in files. Absent until the first one is saved. */
   pepRallies: '@puphii/pep-rallies-v1',
+  /** Skips, kept apart from puff logs so nothing that reads puffs can count them. Absent until the first skip. */
+  skips: '@puphii/skip-logs-v1',
+  /** Which cumulative skip milestones have already been acknowledged. */
+  skipMilestones: '@puphii/skip-milestones-v1',
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
@@ -23,6 +27,8 @@ export const USER_DATA_KEYS = [
   STORAGE_KEYS.game,
   STORAGE_KEYS.plan,
   STORAGE_KEYS.pepRallies,
+  STORAGE_KEYS.skips,
+  STORAGE_KEYS.skipMilestones,
 ] as const;
 
 /**

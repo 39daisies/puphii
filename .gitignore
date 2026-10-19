@@ -1,16 +1,41 @@
+# Dependencies and install trees
 node_modules/
+
+# Expo / Metro
 .expo/
 dist/
 web-build/
 *.log
 .DS_Store
+
+# Local test compile output
 .test-build/
+
+# Native projects and build artifacts (regenerated via prebuild / pods)
 /ios
 /android
+*.xcarchive
+*.ipa
+*.apk
+*.aab
+*.dSYM.zip
+xcuserdata/
+*.xcuserstate
+
+# Environment and secrets — keep .env.example tracked
 .env
-.env*.local
-# Apple signing and App Store Connect keys
+.env.*
+!.env.example
+*.pem
 *.p8
 *.p12
 *.mobileprovision
 *.cer
+*.keystore
+*.jks
+credentials.json
+google-services.json
+GoogleService-Info.plist
+AuthKey_*.p8
+*.secret
+secrets/

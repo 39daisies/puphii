@@ -114,6 +114,7 @@ export type HomePlanView =
       kind: 'plan';
       progress: Exclude<TodayProgress, { kind: 'noPlan' }>;
       paused: boolean;
+      goal: 'reduce' | 'quit';
       week: number;
       days: PlanDay[];
       summary: WeekSummary;
@@ -127,6 +128,7 @@ export function homePlanView(plan: PlanRecord, logs: readonly PuffLog[], today: 
     kind: 'plan',
     progress,
     paused: progress.kind === 'paused',
+    goal: activeSegment(plan)?.goal === 'quit' ? 'quit' : 'reduce',
     week: displayPlanWeek(plan, today) ?? 1,
     days,
     summary: summarizeDays(days),

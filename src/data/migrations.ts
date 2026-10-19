@@ -15,6 +15,10 @@ export type RawData = {
   plan: unknown;
   /** Added without a schema change, like plans. */
   pepRallies: unknown;
+  /** Added without a schema change, like plans. */
+  skips: unknown;
+  /** Added without a schema change, like plans. */
+  skipMilestones: unknown;
 };
 
 export type MigrationContext = { now: Date };

@@ -229,7 +229,7 @@ describe('milestone notice: Home, Your Plan and accessibility', () => {
     assert.match(home, /unseenMilestones\(plan\)\.map\(\(milestone\) => milestone\.id\)/);
     assert.match(home, /planActions\.markMilestonesSeen\(newMilestoneIds\)/);
     assert.match(home, /<MilestoneNotice ids=\{newMilestoneIds\} onOpen=\{onOpenPlan\} onDismiss=\{acknowledgeMilestones\} \/>/);
-    const logButton = home.indexOf('label="+ Log a puff"');
+    const logButton = home.indexOf("'+ Puff'");
     const shown = home.indexOf('<MilestoneNotice');
     assert.ok(logButton > 0 && shown > home.indexOf('label="Undo"') && shown < home.indexOf("planView?.kind === 'plan' ? ("), 'never above the Log button');
   });
